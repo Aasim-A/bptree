@@ -99,15 +99,16 @@ func (t *BTree) findLeaf(key []byte) *BTreeNode {
 }
 
 func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer interface{}) {
-	sibling := &BTreeNode{}
+	newNode := &BTreeNode{}
 	if node.IsLeaf {
-		sibling = makeLeaf()
-		sibling.Next = node.Next
-		node.Next = sibling
+		newNode = makeLeaf()
+		newNode.Next = node.Next
+		node.Next = newNode
 	} else {
-		sibling = makeNode()
+		newNode = makeNode()
 	}
-	sibling.Parent = node.Parent
+
+	newNode.Parent = node.Parent
 
 	adjustedOrderHalf := ORDER_HALF
 	insertionIndex := getInsertionIndex(node, key)
@@ -127,91 +128,110 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 
 	for i := adjustedOrderHalf; i < node.Numkeys; i++ {
 		if node.IsLeaf {
-			sibling.Keys[i-adjustedOrderHalf] = node.Keys[i]
-			sibling.Numkeys++
+			newNode.Keys[i-adjustedOrderHalf] = node.Keys[i]
+			newNode.Numkeys++
 			node.Keys[i] = nil
 		} else if i > adjustedOrderHalf {
-			sibling.Keys[i-adjustedOrderHalf-1] = node.Keys[i]
-			sibling.Numkeys++
+			newNode.Keys[i-adjustedOrderHalf-1] = node.Keys[i]
+			newNode.Numkeys++
 			node.Keys[i] = nil
 		}
-		sibling.Pointers[i-adjustedOrderHalf] = node.Pointers[i+nodePointerAdjustment]
+
+		newNode.Pointers[i-adjustedOrderHalf] = node.Pointers[i+nodePointerAdjustment]
+		node.Pointers[i+nodePointerAdjustment] = nil
 	}
+
 	node.Numkeys = adjustedOrderHalf
 
 	if insertionIndex < ORDER_HALF {
 		insertIntoNode(node, key, pointer)
 	} else {
-		insertIntoNode(sibling, key, pointer)
+		insertIntoNode(newNode, key, pointer)
 	}
 
 	if node == t.Root {
-		newParent := makeNode()
-		if node.IsLeaf {
-			newParent.Keys[0] = sibling.Keys[0]
-		} else {
-			newParent.Keys[0] = nonLeafKeyToAddToParent
-		}
-		newParent.Pointers[0] = node
-		newParent.Pointers[1] = sibling
-		newParent.Numkeys++
-		node.Parent = newParent
-		sibling.Parent = newParent
-		t.Root = newParent
+		t.splitRootAndInsert(node, newNode, nonLeafKeyToAddToParent)
 		return
 	}
 
 	if node.Parent.Numkeys < ORDER-1 {
 		if node.IsLeaf {
-			insertIntoNode(node.Parent, sibling.Keys[0], sibling)
+			insertIntoNode(node.Parent, newNode.Keys[0], newNode)
 			return
 		}
 
-		insertIntoNode(node.Parent, nonLeafKeyToAddToParent, sibling)
+		insertIntoNode(node.Parent, nonLeafKeyToAddToParent, newNode)
 		return
 	}
 
 	if node.IsLeaf {
-		t.recursivelySplitAndInsert(node.Parent, sibling.Keys[0], sibling)
+		t.recursivelySplitAndInsert(node.Parent, newNode.Keys[0], newNode)
 		return
 	}
 
-	t.recursivelySplitAndInsert(node.Parent, nonLeafKeyToAddToParent, sibling)
+	t.recursivelySplitAndInsert(node.Parent, nonLeafKeyToAddToParent, newNode)
+}
+
+func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToParent []byte) {
+	newParent := makeNode()
+	if node.IsLeaf {
+		newParent.Keys[0] = newNode.Keys[0]
+	} else {
+		newParent.Keys[0] = nonLeafKeyToAddToParent
+	}
+	newParent.Pointers[0] = node
+	newParent.Pointers[1] = newNode
+	newParent.Numkeys++
+	node.Parent = newParent
+	newNode.Parent = newParent
+	t.Root = newParent
 }
 
 func (t *BTree) Print() {
-	node := t.Root
-	printNode(node)
-}
-
-func printNode(node interface{}) {
-	isEnd := printPointer(node)
-	if isEnd {
+	if t.Root == nil {
+		fmt.Println("Tree is empty")
 		return
 	}
 
-	fmt.Println()
-	nd := node.(*BTreeNode)
-	if !nd.IsLeaf {
-		nd.Numkeys++
+	queue := []*BTreeNode{t.Root}
+	for len(queue) > 0 {
+		levelSize := len(queue)
+		for i := 0; i < levelSize; i++ {
+			node := queue[0]
+			queue = queue[1:]
+			fmt.Printf("%s", node.Keys[:node.Numkeys])
+			if !node.IsLeaf {
+				nodes := make([]*BTreeNode, node.Numkeys+1)
+				for i := range nodes {
+					nodes[i] = node.Pointers[i].(*BTreeNode)
+				}
+
+				queue = append(queue, nodes...)
+			}
+
+			if i < levelSize-1 {
+				fmt.Print(", ")
+			}
+		}
+
+		fmt.Println()
 	}
-	for i := 0; i < nd.Numkeys; i++ {
-		printNode(nd.Pointers[i])
-	}
-	fmt.Println()
-	fmt.Println()
 }
 
-func printPointer(node interface{}) bool {
-	btreeNode, ok := node.(*BTreeNode)
-	if ok {
-		for i := 0; i < btreeNode.Numkeys; i++ {
-			fmt.Print(string(btreeNode.Keys[i]), " ")
-		}
-		return false
-	} else {
-		fmt.Print(string(node.(*Record).Value), " ")
-		return true
+func (t *BTree) PrintLeaves() {
+	if t.Root == nil {
+		fmt.Println("Tree is empty")
+		return
+	}
+
+	leaf := t.Root
+	for !leaf.IsLeaf {
+		leaf = leaf.Pointers[0].(*BTreeNode)
+	}
+
+	for leaf != nil {
+		fmt.Printf("%s, ", leaf.Keys[:leaf.Numkeys])
+		leaf = leaf.Next
 	}
 }
 
@@ -243,6 +263,10 @@ func insertIntoNode(node *BTreeNode, key []byte, pointer interface{}) {
 	for i := node.Numkeys; i > insertionIndex; i-- {
 		node.Keys[i] = node.Keys[i-1]
 		node.Pointers[i+nonLeafNodeAdjustment] = node.Pointers[i-1+nonLeafNodeAdjustment]
+	}
+
+	if !node.IsLeaf {
+		pointer.(*BTreeNode).Parent = node
 	}
 
 	node.Keys[insertionIndex] = key
