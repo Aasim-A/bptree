@@ -6,6 +6,10 @@ import (
 	"fmt"
 )
 
+func NewTree() *BTree {
+	return &BTree{root: nil}
+}
+
 const ORDER = 4
 
 // Ceil the division. eg. 7/2 = 3, 7%2 = 1. 3+1 = 4.
@@ -22,10 +26,12 @@ type BTreeNode struct {
 	IsLeaf   bool
 	Parent   *BTreeNode
 	Next     *BTreeNode
+	Prev     *BTreeNode
 }
 
 type BTree struct {
-	Root *BTreeNode
+	root    *BTreeNode
+	keySize int
 }
 
 func (t *BTree) Find(key []byte) (*Record, error) {
@@ -50,6 +56,30 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 	return node.Pointers[i].(*Record), nil
 }
 
+func (t *BTree) Update(key, newValue []byte) error {
+	leaf := t.findLeaf(key)
+	if leaf == nil {
+		return errors.New("Key not found")
+	}
+
+	var i int
+	found := false
+	for i = leaf.Numkeys - 1; i >= 0; i-- {
+		if bytes.Compare(leaf.Keys[i], key) == 0 {
+			found = true
+			newValueRecord := &Record{newValue}
+			leaf.Pointers[i] = newValueRecord
+			break
+		}
+	}
+
+	if !found {
+		return errors.New("Key not found")
+	}
+
+	return nil
+}
+
 func (t *BTree) Insert(key, value []byte) error {
 	val, _ := t.Find(key)
 	if val != nil {
@@ -57,13 +87,18 @@ func (t *BTree) Insert(key, value []byte) error {
 	}
 
 	pointer := &Record{Value: value}
-	if t.Root == nil {
-		t.Root = makeLeaf()
-		t.Root.Keys[0] = key
-		t.Root.Pointers[0] = pointer
-		t.Root.Numkeys++
+	if t.root == nil {
+		t.root = makeLeaf()
+		t.root.Keys[0] = key
+		t.root.Pointers[0] = pointer
+		t.root.Numkeys++
+		t.keySize = len(key)
 
 		return nil
+	}
+
+	if len(key) != t.keySize {
+		return errors.New("Invalid key size. All keys must have the same length.")
 	}
 
 	leaf := t.findLeaf(key)
@@ -77,9 +112,9 @@ func (t *BTree) Insert(key, value []byte) error {
 }
 
 func (t *BTree) findLeaf(key []byte) *BTreeNode {
-	node := t.Root
-	if node == nil {
-		return node
+	node := t.root
+	if node == nil || key == nil {
+		return nil
 	}
 
 	for !node.IsLeaf {
@@ -103,6 +138,7 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 	if node.IsLeaf {
 		newNode = makeLeaf()
 		newNode.Next = node.Next
+		newNode.Prev = node
 		node.Next = newNode
 	} else {
 		newNode = makeNode()
@@ -130,14 +166,13 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		if node.IsLeaf {
 			newNode.Keys[i-adjustedOrderHalf] = node.Keys[i]
 			newNode.Numkeys++
-			node.Keys[i] = nil
 		} else if i > adjustedOrderHalf {
 			newNode.Keys[i-adjustedOrderHalf-1] = node.Keys[i]
 			newNode.Numkeys++
-			node.Keys[i] = nil
 		}
 
 		newNode.Pointers[i-adjustedOrderHalf] = node.Pointers[i+nodePointerAdjustment]
+		node.Keys[i] = nil
 		node.Pointers[i+nodePointerAdjustment] = nil
 	}
 
@@ -149,7 +184,7 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		insertIntoNode(newNode, key, pointer)
 	}
 
-	if node == t.Root {
+	if node == t.root {
 		t.splitRootAndInsert(node, newNode, nonLeafKeyToAddToParent)
 		return
 	}
@@ -184,16 +219,16 @@ func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToPa
 	newParent.Numkeys++
 	node.Parent = newParent
 	newNode.Parent = newParent
-	t.Root = newParent
+	t.root = newParent
 }
 
 func (t *BTree) Print() {
-	if t.Root == nil {
+	if t.root == nil {
 		fmt.Println("Tree is empty")
 		return
 	}
 
-	queue := []*BTreeNode{t.Root}
+	queue := []*BTreeNode{t.root}
 	for len(queue) > 0 {
 		levelSize := len(queue)
 		for i := 0; i < levelSize; i++ {
@@ -219,12 +254,12 @@ func (t *BTree) Print() {
 }
 
 func (t *BTree) PrintLeaves() {
-	if t.Root == nil {
+	if t.root == nil {
 		fmt.Println("Tree is empty")
 		return
 	}
 
-	leaf := t.Root
+	leaf := t.root
 	for !leaf.IsLeaf {
 		leaf = leaf.Pointers[0].(*BTreeNode)
 	}
@@ -233,6 +268,25 @@ func (t *BTree) PrintLeaves() {
 		fmt.Printf("%s, ", leaf.Keys[:leaf.Numkeys])
 		leaf = leaf.Next
 	}
+	fmt.Println()
+}
+
+func (t *BTree) PrintLeavesBackwards() {
+	if t.root == nil {
+		fmt.Println("Tree is empty")
+		return
+	}
+
+	leaf := t.root
+	for !leaf.IsLeaf {
+		leaf = leaf.Pointers[leaf.Numkeys].(*BTreeNode)
+	}
+
+	for leaf != nil {
+		fmt.Printf("%s, ", leaf.Keys[:leaf.Numkeys])
+		leaf = leaf.Prev
+	}
+	fmt.Println()
 }
 
 func makeNode() *BTreeNode {
@@ -243,6 +297,7 @@ func makeNode() *BTreeNode {
 		IsLeaf:   false,
 		Parent:   nil,
 		Next:     nil,
+		Prev:     nil,
 	}
 }
 

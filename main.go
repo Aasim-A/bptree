@@ -14,12 +14,4 @@ func main() {
 			break
 		}
 	}
-	// fmt.Println("-------------------------")
-	tree.Print()
-	// fmt.Println("-------------------------")
-	// val, err := tree.Find([]byte("05"))
-	// fmt.Println(err)
-	// if err == nil {
-	// 	fmt.Println(string(val.Value))
-	// }
 }
