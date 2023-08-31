@@ -42,9 +42,6 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 
 	var i int
 	found := false
-	// fmt.Println(key)
-	// fmt.Printf("%+v\n", node)
-	// fmt.Println()
 	for i = node.Numkeys - 1; i >= 0; i-- {
 		if bytes.Compare(node.Keys[i], key) == 0 {
 			found = true
@@ -84,9 +81,13 @@ func (t *BTree) Update(key, newValue []byte) error {
 }
 
 func (t *BTree) Insert(key, value []byte) error {
-	val, _ := t.Find(key)
-	if val != nil {
-		return errors.New("Key already exists")
+	leaf := t.findLeaf(key)
+	if leaf != nil {
+		for i := 0; i < leaf.Numkeys; i++ {
+			if bytes.Compare(key, leaf.Keys[i]) == 0 {
+				return errors.New("Key already exists")
+			}
+		}
 	}
 
 	pointer := &Record{Value: value}
@@ -104,7 +105,6 @@ func (t *BTree) Insert(key, value []byte) error {
 		return errors.New("Invalid key size. All keys must have the same length.")
 	}
 
-	leaf := t.findLeaf(key)
 	if leaf.Numkeys < ORDER-1 {
 		insertIntoNode(leaf, key, pointer)
 		return nil
@@ -236,7 +236,7 @@ func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToPa
 	t.root = newParent
 }
 
-func (t *BTree) Print() {
+func (t *BTree) Print(withPointers bool) {
 	if t.root == nil {
 		fmt.Println("Tree is empty")
 		return
@@ -249,10 +249,13 @@ func (t *BTree) Print() {
 			node := queue[0]
 			queue = queue[1:]
 			fmt.Print(node.Keys[:node.Numkeys])
-			if !node.IsLeaf {
-				fmt.Printf("%p ", node)
+			if withPointers {
+				if !node.IsLeaf {
+					fmt.Printf("%p ", node)
+				}
+				fmt.Printf("%p", node.Parent)
 			}
-			fmt.Printf("%p", node.Parent)
+
 			if !node.IsLeaf {
 				nodes := make([]*BTreeNode, node.Numkeys+1)
 				for i := range nodes {
@@ -283,7 +286,7 @@ func (t *BTree) PrintLeaves() {
 	}
 
 	for leaf != nil {
-		fmt.Printf("%s, ", leaf.Keys[:leaf.Numkeys])
+		fmt.Print(leaf.Keys[:leaf.Numkeys])
 		leaf = leaf.Next
 	}
 	fmt.Println()
@@ -301,7 +304,7 @@ func (t *BTree) PrintLeavesBackwards() {
 	}
 
 	for leaf != nil {
-		fmt.Printf("%s, ", leaf.Keys[:leaf.Numkeys])
+		fmt.Print(leaf.Keys[:leaf.Numkeys])
 		leaf = leaf.Prev
 	}
 	fmt.Println()
