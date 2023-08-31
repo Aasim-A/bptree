@@ -172,6 +172,11 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		}
 
 		newNode.Pointers[i-adjustedOrderHalf] = node.Pointers[i+nodePointerAdjustment]
+		pointerNode, ok := newNode.Pointers[i-adjustedOrderHalf].(*BTreeNode)
+		if ok {
+			pointerNode.Parent = newNode
+		}
+
 		node.Keys[i] = nil
 		node.Pointers[i+nodePointerAdjustment] = nil
 	}

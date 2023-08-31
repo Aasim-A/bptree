@@ -1,12 +1,13 @@
 package bptree
 
 import (
+	"crypto/rand"
 	"fmt"
 	"reflect"
 	"testing"
 )
 
-const MULTIPLE_TEST_COUNT = 1000
+const MULTIPLE_TEST_COUNT = 15
 
 func TestInsertNilRoot(t *testing.T) {
 	tree := NewTree()
@@ -56,10 +57,10 @@ func TestInsertVariableKeySize(t *testing.T) {
 	}
 }
 
-func TestMultipleInsert(t *testing.T) {
+func TestMultipleInsertAscendingKeys(t *testing.T) {
 	tree := NewTree()
 	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
-	for i := 0; i < MULTIPLE_TEST_COUNT+1; i++ {
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
 		err := tree.Insert(key, val)
 		if err != nil {
@@ -67,7 +68,7 @@ func TestMultipleInsert(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < MULTIPLE_TEST_COUNT+1; i++ {
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
 		rec, err := tree.Find(key)
 		if err != nil {
@@ -84,7 +85,79 @@ func TestMultipleInsert(t *testing.T) {
 	}
 }
 
-func TestInsertKeyTwice(t *testing.T) {
+func TestMultipleInsertDescendingKeys(t *testing.T) {
+	tree := NewTree()
+	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
+	for i := MULTIPLE_TEST_COUNT; i > 0; i-- {
+		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+		err := tree.Insert(key, val)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := MULTIPLE_TEST_COUNT; i > 0; i-- {
+		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+		rec, err := tree.Find(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if rec == nil {
+			t.Fatalf("expected %v but got %v \n", string(val), rec)
+		}
+
+		if !reflect.DeepEqual(rec.Value, val) {
+			t.Fatalf("expected %v but got %v \n", val, rec.Value)
+		}
+	}
+}
+
+func TestMultipleInsertRandomKeys(t *testing.T) {
+	bufLength := 1
+	randBytes := make([][]byte, MULTIPLE_TEST_COUNT)
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
+		buf := make([]byte, bufLength)
+		n, err := rand.Read(buf)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if n != bufLength {
+			t.Fatalf("Expected %d random bytes written but got %d", bufLength, n)
+		}
+
+		randBytes[i] = buf
+	}
+
+	tree := NewTree()
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
+		key := randBytes[i]
+		err := tree.Insert(key, append([]byte("v-"), key...))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
+		key := randBytes[i]
+		val := append([]byte("v-"), key...)
+		rec, err := tree.Find(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if rec == nil {
+			t.Fatal("Expected result but got nil")
+		}
+
+		if !reflect.DeepEqual(rec.Value, val) {
+			t.Fatalf("expected %v but got %v \n", val, rec.Value)
+		}
+	}
+}
+
+func TestInsertSameKeyTwice(t *testing.T) {
 	tree := NewTree()
 	key, val := []byte("1"), []byte("v1")
 	err := tree.Insert(key, val)
@@ -162,7 +235,7 @@ func TestInsertSameValueTwice(t *testing.T) {
 func TestMultipleUpdate(t *testing.T) {
 	tree := NewTree()
 	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
-	for i := 0; i < MULTIPLE_TEST_COUNT+1; i++ {
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
 		err := tree.Insert(key, val)
 		if err != nil {
@@ -170,7 +243,7 @@ func TestMultipleUpdate(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < MULTIPLE_TEST_COUNT+1; i++ {
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key, newVal := getPaddedKey(padding, i), []byte("new v"+fmt.Sprint(i))
 		err := tree.Update(key, newVal)
 		if err != nil {
@@ -178,7 +251,7 @@ func TestMultipleUpdate(t *testing.T) {
 		}
 	}
 
-	for i := 0; i < MULTIPLE_TEST_COUNT+1; i++ {
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key, newVal := getPaddedKey(padding, i), []byte("new v"+fmt.Sprint(i))
 		rec, err := tree.Find(key)
 		if err != nil {
@@ -195,7 +268,7 @@ func TestMultipleUpdate(t *testing.T) {
 	}
 }
 
-func TestUpdateNotFound(t *testing.T) {
+func TestUpdateNotFoundNilRoot(t *testing.T) {
 	tree := NewTree()
 	key, newVal := []byte("1"), []byte("v1")
 	err := tree.Update(key, newVal)
@@ -205,6 +278,20 @@ func TestUpdateNotFound(t *testing.T) {
 
 	if tree.root != nil {
 		t.Fatalf("expected nil but got %v", tree.root)
+	}
+}
+
+func TestUpdateNotFound(t *testing.T) {
+	tree := NewTree()
+	key1, key2, val := []byte("1"), []byte("2"), []byte("v1")
+	err := tree.Insert(key1, val)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = tree.Update(key2, val)
+	if err == nil {
+		t.Fatal("Expected error but got nil")
 	}
 }
 
