@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const MULTIPLE_TEST_COUNT = 15
+const MULTIPLE_TEST_COUNT = 1000
 
 func TestInsertNilRoot(t *testing.T) {
 	tree := NewTree()
@@ -114,7 +114,7 @@ func TestMultipleInsertDescendingKeys(t *testing.T) {
 }
 
 func TestMultipleInsertRandomKeys(t *testing.T) {
-	bufLength := 1
+	bufLength := 16
 	randBytes := make([][]byte, MULTIPLE_TEST_COUNT)
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		buf := make([]byte, bufLength)

@@ -42,6 +42,9 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 
 	var i int
 	found := false
+	// fmt.Println(key)
+	// fmt.Printf("%+v\n", node)
+	// fmt.Println()
 	for i = node.Numkeys - 1; i >= 0; i-- {
 		if bytes.Compare(node.Keys[i], key) == 0 {
 			found = true
@@ -145,52 +148,58 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 	}
 
 	newNode.Parent = node.Parent
+	tempNode := &BTreeNode{
+		Keys:     make([][]byte, ORDER),
+		Pointers: make([]interface{}, ORDER+1),
+		IsLeaf:   node.IsLeaf,
+		Numkeys:  node.Numkeys,
+	}
 
-	adjustedOrderHalf := ORDER_HALF
-	insertionIndex := getInsertionIndex(node, key)
-	if insertionIndex < ORDER_HALF {
-		adjustedOrderHalf--
+	i := 0
+	for i = 0; i < node.Numkeys; i++ {
+		tempNode.Keys[i] = node.Keys[i]
+		tempNode.Pointers[i] = node.Pointers[i]
+	}
+	// Add the extra pointer since the pointers slice is larger that the keys slice by one
+	// i will be increased by one after the loop finishes because it increases then checks the condition
+	tempNode.Pointers[i] = node.Pointers[i]
+
+	insertIntoNode(tempNode, key, pointer)
+	// Reset numkeys to reflect new content
+	node.Numkeys = 0
+	node.Keys = make([][]byte, ORDER-1)
+	node.Pointers = make([]interface{}, ORDER)
+	for i = 0; i < ORDER_HALF; i++ {
+		node.Keys[i] = tempNode.Keys[i]
+		node.Pointers[i] = tempNode.Pointers[i]
+		node.Numkeys++
 	}
 
 	nodePointerAdjustment := 0
 	if !node.IsLeaf {
+		// Add the extra pointer since the pointers slice is larger that the keys slice by one
+		// i will be increased by one after the loop finishes because it increases then checks the condition
+		node.Pointers[i] = tempNode.Pointers[i]
 		nodePointerAdjustment = 1
 	}
 
-	var nonLeafKeyToAddToParent []byte
-	if !node.IsLeaf {
-		nonLeafKeyToAddToParent = node.Keys[adjustedOrderHalf]
-	}
-
-	for i := adjustedOrderHalf; i < node.Numkeys; i++ {
+	for i = ORDER_HALF; i < ORDER; i++ {
 		if node.IsLeaf {
-			newNode.Keys[i-adjustedOrderHalf] = node.Keys[i]
+			newNode.Keys[i-ORDER_HALF] = tempNode.Keys[i]
 			newNode.Numkeys++
-		} else if i > adjustedOrderHalf {
-			newNode.Keys[i-adjustedOrderHalf-1] = node.Keys[i]
-			newNode.Numkeys++
+		} else {
+			if i > ORDER_HALF {
+				newNode.Keys[i-ORDER_HALF-1] = tempNode.Keys[i]
+				newNode.Numkeys++
+			}
+
+			tempNode.Pointers[i+nodePointerAdjustment].(*BTreeNode).Parent = newNode
 		}
-
-		newNode.Pointers[i-adjustedOrderHalf] = node.Pointers[i+nodePointerAdjustment]
-		pointerNode, ok := newNode.Pointers[i-adjustedOrderHalf].(*BTreeNode)
-		if ok {
-			pointerNode.Parent = newNode
-		}
-
-		node.Keys[i] = nil
-		node.Pointers[i+nodePointerAdjustment] = nil
-	}
-
-	node.Numkeys = adjustedOrderHalf
-
-	if insertionIndex < ORDER_HALF {
-		insertIntoNode(node, key, pointer)
-	} else {
-		insertIntoNode(newNode, key, pointer)
+		newNode.Pointers[i-ORDER_HALF] = tempNode.Pointers[i+nodePointerAdjustment]
 	}
 
 	if node == t.root {
-		t.splitRootAndInsert(node, newNode, nonLeafKeyToAddToParent)
+		t.splitRootAndInsert(node, newNode, tempNode.Keys[ORDER_HALF])
 		return
 	}
 
@@ -200,7 +209,7 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 			return
 		}
 
-		insertIntoNode(node.Parent, nonLeafKeyToAddToParent, newNode)
+		insertIntoNode(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
 		return
 	}
 
@@ -209,7 +218,7 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		return
 	}
 
-	t.recursivelySplitAndInsert(node.Parent, nonLeafKeyToAddToParent, newNode)
+	t.recursivelySplitAndInsert(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
 }
 
 func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToParent []byte) {
@@ -239,7 +248,11 @@ func (t *BTree) Print() {
 		for i := 0; i < levelSize; i++ {
 			node := queue[0]
 			queue = queue[1:]
-			fmt.Printf("%s", node.Keys[:node.Numkeys])
+			fmt.Print(node.Keys[:node.Numkeys])
+			if !node.IsLeaf {
+				fmt.Printf("%p ", node)
+			}
+			fmt.Printf("%p", node.Parent)
 			if !node.IsLeaf {
 				nodes := make([]*BTreeNode, node.Numkeys+1)
 				for i := range nodes {
@@ -323,10 +336,6 @@ func insertIntoNode(node *BTreeNode, key []byte, pointer interface{}) {
 	for i := node.Numkeys; i > insertionIndex; i-- {
 		node.Keys[i] = node.Keys[i-1]
 		node.Pointers[i+nonLeafNodeAdjustment] = node.Pointers[i-1+nonLeafNodeAdjustment]
-	}
-
-	if !node.IsLeaf {
-		pointer.(*BTreeNode).Parent = node
 	}
 
 	node.Keys[insertionIndex] = key
