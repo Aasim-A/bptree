@@ -11,6 +11,37 @@ import (
 const MULTIPLE_TEST_COUNT = 1000
 const RAND_KEY_LEN = 16
 
+func TestFindNilRoot(t *testing.T) {
+	tree := NewTree()
+	key := []byte("1")
+	rec, err := tree.Find(key)
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+
+	if rec != nil {
+		t.Fatalf("expected nil but got %v \n", rec)
+	}
+}
+
+func TestFind(t *testing.T) {
+	tree := NewTree()
+	key, key2, val := []byte("1"), []byte("2"), []byte("v1")
+	err := tree.Insert(key, val)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := tree.Find(key2)
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+
+	if rec != nil {
+		t.Fatalf("expected nil but got %v \n", rec)
+	}
+}
+
 func TestInsertNilRoot(t *testing.T) {
 	tree := NewTree()
 	key, val := []byte("1"), []byte("v1")
@@ -25,7 +56,7 @@ func TestInsertNilRoot(t *testing.T) {
 	}
 
 	if rec == nil {
-		t.Fatal("Expected value to be returned. Received nil")
+		t.Fatal("Expected value but got nil")
 	}
 
 	if !reflect.DeepEqual(rec.Value, val) {
