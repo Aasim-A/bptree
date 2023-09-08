@@ -2,12 +2,14 @@ package bptree
 
 import (
 	"crypto/rand"
+	"errors"
 	"fmt"
 	"reflect"
 	"testing"
 )
 
 const MULTIPLE_TEST_COUNT = 1000
+const RAND_KEY_LEN = 16
 
 func TestInsertNilRoot(t *testing.T) {
 	tree := NewTree()
@@ -59,89 +61,83 @@ func TestInsertVariableKeySize(t *testing.T) {
 
 func TestMultipleInsertAscendingKeys(t *testing.T) {
 	tree := NewTree()
-	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
-	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
-		err := tree.Insert(key, val)
-		if err != nil {
-			t.Fatal(err)
-		}
+	err := ascendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+	err = ascendingLoop(func(key, val []byte) error {
 		rec, err := tree.Find(key)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 
 		if rec == nil {
-			t.Fatalf("expected %v but got %v \n", string(val), rec)
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec))
 		}
 
 		if !reflect.DeepEqual(rec.Value, val) {
-			t.Fatalf("expected %v but got %v \n", val, rec.Value)
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec.Value))
 		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestMultipleInsertDescendingKeys(t *testing.T) {
 	tree := NewTree()
-	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
-	for i := MULTIPLE_TEST_COUNT; i > 0; i-- {
-		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
-		err := tree.Insert(key, val)
-		if err != nil {
-			t.Fatal(err)
-		}
+	err := descendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	for i := MULTIPLE_TEST_COUNT; i > 0; i-- {
-		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+	err = descendingLoop(func(key, val []byte) error {
 		rec, err := tree.Find(key)
 		if err != nil {
-			t.Fatal(err)
+			return err
 		}
 
 		if rec == nil {
-			t.Fatalf("expected %v but got %v \n", string(val), rec)
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec))
 		}
 
 		if !reflect.DeepEqual(rec.Value, val) {
-			t.Fatalf("expected %v but got %v \n", val, rec.Value)
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec.Value))
 		}
+
+		return nil
+	})
+
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestMultipleInsertRandomKeys(t *testing.T) {
-	bufLength := 16
-	randBytes := make([][]byte, MULTIPLE_TEST_COUNT)
-	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		buf := make([]byte, bufLength)
-		n, err := rand.Read(buf)
-		if err != nil {
-			t.Fatal(err)
-		}
-
-		if n != bufLength {
-			t.Fatalf("Expected %d random bytes written but got %d", bufLength, n)
-		}
-
-		randBytes[i] = buf
+	randKeys, err := getRandomKeys()
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	tree := NewTree()
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key := randBytes[i]
-		err := tree.Insert(key, append([]byte("v-"), key...))
+		key := randKeys[i]
+		err := tree.Insert(key, append([]byte("v"), key...))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key := randBytes[i]
-		val := append([]byte("v-"), key...)
+		key := randKeys[i]
+		val := append([]byte("v"), key...)
 		rec, err := tree.Find(key)
 		if err != nil {
 			t.Fatal(err)
@@ -232,34 +228,117 @@ func TestInsertSameValueTwice(t *testing.T) {
 	}
 }
 
-func TestMultipleUpdate(t *testing.T) {
+func TestMultipleUpdateAscending(t *testing.T) {
 	tree := NewTree()
-	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
+	err := ascendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ascendingLoop(func(key, val []byte) error {
+		newVal := append([]byte("new v"), val...)
+		return tree.Update(key, newVal)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ascendingLoop(func(key, val []byte) error {
+		newVal := append([]byte("new v"), val...)
+		rec, err := tree.Find(key)
+		if err != nil {
+			return err
+		}
+
+		if rec == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec))
+		}
+
+		if !reflect.DeepEqual(rec.Value, newVal) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec.Value))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMultipleUpdateDescending(t *testing.T) {
+	tree := NewTree()
+	err := descendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = descendingLoop(func(key, val []byte) error {
+		newVal := append([]byte("new v"), val...)
+		return tree.Update(key, newVal)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = descendingLoop(func(key, val []byte) error {
+		newVal := append([]byte("new v"), val...)
+		rec, err := tree.Find(key)
+		if err != nil {
+			return err
+		}
+
+		if rec == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec))
+		}
+
+		if !reflect.DeepEqual(rec.Value, newVal) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec.Value))
+		}
+
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestMultipleUpdateRandomKeys(t *testing.T) {
+	randKeys, err := getRandomKeys()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tree := NewTree()
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
-		err := tree.Insert(key, val)
+		key := randKeys[i]
+		err := tree.Insert(key, append([]byte("v"), key...))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key, newVal := getPaddedKey(padding, i), []byte("new v"+fmt.Sprint(i))
-		err := tree.Update(key, newVal)
+		key := randKeys[i]
+		err := tree.Update(key, append([]byte("new v"), key...))
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
 
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
-		key, newVal := getPaddedKey(padding, i), []byte("new v"+fmt.Sprint(i))
+		key := randKeys[i]
+		newVal := append([]byte("new v"), key...)
 		rec, err := tree.Find(key)
 		if err != nil {
 			t.Fatal(err)
 		}
 
 		if rec == nil {
-			t.Fatalf("expected %v but got %v \n", newVal, rec)
+			t.Fatal("Expected result but got nil")
 		}
 
 		if !reflect.DeepEqual(rec.Value, newVal) {
@@ -301,4 +380,49 @@ func toString(i int) string {
 
 func getPaddedKey(padding string, i int) []byte {
 	return []byte(fmt.Sprintf("%0"+padding+"d", i))
+}
+
+func getRandomKeys() ([][]byte, error) {
+	randBytes := make([][]byte, MULTIPLE_TEST_COUNT)
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
+		buf := make([]byte, RAND_KEY_LEN)
+		n, err := rand.Read(buf)
+		if err != nil {
+			return nil, err
+		}
+
+		if n != RAND_KEY_LEN {
+			return nil, errors.New(fmt.Sprintf("Expected %d random bytes written but got %d", RAND_KEY_LEN, n))
+		}
+
+		randBytes[i] = buf
+	}
+
+	return randBytes, nil
+}
+
+func ascendingLoop(cb func(key, val []byte) error) error {
+	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
+	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
+		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+		err := cb(key, val)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+func descendingLoop(cb func(key, val []byte) error) error {
+	padding := toString(len(toString(MULTIPLE_TEST_COUNT)))
+	for i := MULTIPLE_TEST_COUNT; i > 0; i-- {
+		key, val := getPaddedKey(padding, i), []byte("v"+fmt.Sprint(i))
+		err := cb(key, val)
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
