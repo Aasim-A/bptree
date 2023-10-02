@@ -273,22 +273,28 @@ func (t *BTree) deleteEntry(node *BTreeNode, key []byte, pointer interface{}) er
 	}
 
 	siblingIdx := getSiblingIndex(node)
+	nodeIdx := siblingIdx + 1
 	kPrimeIdx := siblingIdx
 	if siblingIdx < 0 {
 		siblingIdx = 1
 		kPrimeIdx = 0
 	}
 
+	// ChatGPT: In a B+ tree, the term "k_prime" typically refers to the minimum
+	// key value in a node that separates it from its right sibling.
+	// This value is used to maintain the order and balance of the tree.
 	kPrime := node.Parent.Keys[kPrimeIdx]
-	sibling := node.Parent.Pointers[siblingIdx].(*BTreeNode)
+	sibling, ok := node.Parent.Pointers[siblingIdx].(*BTreeNode)
+	if !ok {
+		fmt.Println("hhh")
+	}
 
 	if sibling.Numkeys > minKeys {
-		borrowFromSibling(sibling, node, kPrime)
+		borrowFromSibling(node, sibling, siblingIdx < nodeIdx, kPrime, kPrimeIdx)
 		return nil
 	}
 
-	mergeNodes(node, sibling, kPrime)
-	return nil
+	return t.mergeNodes(node, sibling, siblingIdx < nodeIdx, kPrime)
 }
 
 func getSiblingIndex(node *BTreeNode) int {
@@ -317,116 +323,6 @@ func (t *BTree) adjustRoot() {
 	t.root = newRoot
 }
 
-func (t *BTree) _deleteEntry(node *BTreeNode, key []byte, pointer interface{}) error {
-	// If the root node is a leaf node and it only has `key` in it,
-	// we delete the root node.
-	if node == t.root && node.Numkeys == 1 {
-		t.root = nil
-		return nil
-	}
-
-	removeFromNode(node, key, pointer)
-	// The minimum number of keys that a leaf can have is ORDER_HALF - 1 unless it's the root node.
-	// And the minimum for a non leaf node is ORDER_HALF unless it's the root node.
-	minKeyCount := ORDER_HALF - 1
-	if !node.IsLeaf {
-		minKeyCount = ORDER_HALF
-	}
-
-	// We subtracted 1 from minKeyCount to avoid `>=`.
-	if node == t.root || node.Numkeys > minKeyCount-1 {
-		// If the index is 0, we need to replace the parent key with the
-		// key next to the removed one.
-		// Eg. given the leaf [7, 8], and its parent [5, 7].
-		// If we remove `7`, the leaf will be [8] and the parent will be [5, 8]
-		if node.Parent != nil && bytes.Compare(node.Parent.Keys[0], key) == 0 {
-			nodeIndexInParent := getKeyIndex(node.Parent, key)
-			if nodeIndexInParent < 0 {
-				return INVALID_KEY_INDEX_ERROR
-			}
-
-			node.Parent.Keys[nodeIndexInParent] = node.Keys[0]
-		}
-
-		return nil
-	}
-
-	parent := node.Parent
-	nodePointerIndexInParent := getPointerIndex(parent, node)
-	if nodePointerIndexInParent < 0 {
-		return INVALID_KEY_INDEX_ERROR
-	}
-
-	leftSibling, rightSibling := getSiblings(parent, nodePointerIndexInParent)
-
-	// If sibling has excess keys, we take one and insert it into our node.
-	// We subtracted 1 from minKeyCount to avoid `>=`.
-	if leftSibling != nil && leftSibling.Numkeys > minKeyCount {
-		borrowFromSibling(leftSibling, node)
-		// We need to change the parent key into the borrowed key
-		if node.IsLeaf {
-			// nodePointerIndexInParent-1 because the parent is a non-leaf node, thus the
-			// pointers are more than keys by 1.
-			parent.Keys[nodePointerIndexInParent-1] = node.Keys[0]
-		}
-
-		return nil
-	}
-
-	if rightSibling != nil && rightSibling.Numkeys > minKeyCount {
-		borrowFromSibling(rightSibling, node)
-		if node.IsLeaf {
-			// We have to update the key for the right sibling in the parent as the
-			// first index in keys had changed.
-			parent.Keys[nodePointerIndexInParent] = rightSibling.Keys[0]
-			if node.Numkeys == 1 {
-				// We have to update the key for `node` in the parent as the
-				// first index in keys had changed.
-				parent.Keys[nodePointerIndexInParent-1] = node.Keys[0]
-			}
-		}
-
-		return nil
-	}
-
-	// We need to merge the node with its sibling as there are no keys to borrow.
-	var node1, node2 *BTreeNode
-	if leftSibling != nil {
-		// We need to reset next and prev to account for the leaf being removed.
-		if node.IsLeaf {
-			leftSibling.Next = node.Next
-			node.Next.Prev = leftSibling
-		}
-
-		node1 = leftSibling
-		node2 = node
-	} else {
-		if node.IsLeaf {
-			rightSibling.Prev = node.Prev
-			node.Prev.Next = rightSibling
-		}
-
-		node1 = node
-		node2 = rightSibling
-	}
-
-	newNumKeys := node1.Numkeys + node2.Numkeys
-	i := node1.Numkeys
-	for ; i < newNumKeys; i++ {
-		node1.Keys[i] = node2.Keys[i-node1.Numkeys]
-		node1.Pointers[i] = node2.Pointers[i-node1.Numkeys]
-	}
-	if !node.IsLeaf {
-		node1.Pointers[i] = node2.Pointers[i-node1.Numkeys]
-	}
-
-	var keyToRemove []byte = nil
-	if nodePointerIndexInParent-1 > -1 {
-		keyToRemove = node.Keys[nodePointerIndexInParent-1]
-	}
-	return t.deleteEntry(node.Parent, keyToRemove, node)
-}
-
 func getSiblings(parent *BTreeNode, nodePointerIndex int) (*BTreeNode, *BTreeNode) {
 	var left, right *BTreeNode
 	if nodePointerIndex-1 > -1 {
@@ -445,43 +341,150 @@ func getSiblings(parent *BTreeNode, nodePointerIndex int) (*BTreeNode, *BTreeNod
 	return left, right
 }
 
-func borrowFromSibling(sibling, node *BTreeNode) {
-	lastSiblingKeyIdx := sibling.Numkeys - 1
-	nonLeafNodeAdjustment := 0
+func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) {
 	if !node.IsLeaf {
-		nonLeafNodeAdjustment = 1
-	}
+		if isLeftSibling {
+			// Sibling is on the left.
+			// We need to shift node's keys & pointers to the right by one.
+			i := node.Numkeys
+			for ; i > 0; i-- {
+				node.Keys[i] = node.Keys[i-1]
+				node.Pointers[i+1] = node.Pointers[i]
+			}
+			// We need to account for the extra pointer since this is a non leaf node.
+			node.Pointers[i+1] = node.Pointers[i]
 
-	if bytes.Compare(sibling.Keys[lastSiblingKeyIdx], node.Keys[0]) < 0 { // Sibling is a left sibling
-		i := node.Numkeys
-		for ; i > 0; i-- {
-			node.Keys[i] = node.Keys[i-1]
-			node.Pointers[i+nonLeafNodeAdjustment] = node.Pointers[i-1+nonLeafNodeAdjustment]
-		}
-		if !node.IsLeaf {
-			node.Pointers[i+nonLeafNodeAdjustment] = node.Pointers[i]
+			// The key to be inserted is `kPrime` because this is a non leaf node.
+			// Inserting `kPrime` instead of the first key of sibling ensures that
+			// tree traversal still works. Otherwise, parts of the tree will become
+			// inaccessible.
+			node.Keys[0] = kPrime
+			node.Pointers[0] = sibling.Pointers[sibling.Numkeys]
+			// We need to set the parent of the borrowed pointer to node since its
+			// parent is changing.
+			node.Pointers[0].(*BTreeNode).Parent = node
+			// Update the parent key with the key to be removed from sibling.
+			node.Parent.Keys[kPrimeIdx] = sibling.Keys[sibling.Numkeys-1]
+			node.Numkeys++
+			// Resetting the borrowed key & pointer.
+			sibling.Keys[sibling.Numkeys-1] = nil
+			sibling.Pointers[sibling.Numkeys] = nil
+			sibling.Numkeys--
+
+			return
 		}
 
-		node.Keys[0] = sibling.Keys[lastSiblingKeyIdx]
-		node.Pointers[0] = sibling.Pointers[lastSiblingKeyIdx+nonLeafNodeAdjustment]
+		// Sibling is on the right.
+		// The key to be inserted into node is also `kPrime` for the above mentioned reasons.
+		node.Keys[node.Numkeys] = kPrime
+		node.Pointers[node.Numkeys+1] = sibling.Pointers[0]
+		// We need to set the parent of the borrowed pointer to node since its
+		// parent is changing.
+		node.Pointers[node.Numkeys+1].(*BTreeNode).Parent = node
+		// Update the parent key with the key to be removed from sibling.
+		node.Parent.Keys[kPrimeIdx] = sibling.Keys[0]
 		node.Numkeys++
+		// We need to shift sibling's keys & pointers to the left by one.
+		i := 0
+		for ; i < sibling.Numkeys-1; i++ {
+			sibling.Keys[i] = sibling.Keys[i+1]
+			sibling.Pointers[i] = sibling.Pointers[i+1]
+			sibling.Keys[i+1] = nil
+			sibling.Pointers[i+1] = nil
+		}
+		// We need to account for the extra pointer since this is a non leaf node.
+		sibling.Pointers[i] = sibling.Pointers[i+1]
+		sibling.Pointers[i+1] = nil
+
+		// Set borrowed key & pointer to nil.
+		sibling.Keys[i] = nil
+		sibling.Pointers[i+1] = nil
 		sibling.Numkeys--
+
 		return
 	}
 
-	node.Keys[node.Numkeys] = sibling.Keys[0]
-	node.Pointers[node.Numkeys+nonLeafNodeAdjustment] = sibling.Pointers[0]
-	i := 0
-	for ; i < sibling.Numkeys-1; i++ {
-		sibling.Keys[i] = sibling.Keys[i+1]
-		sibling.Pointers[i] = sibling.Pointers[i+1]
-	}
-	if !node.IsLeaf {
-		node.Pointers[i] = node.Pointers[i+1]
+	// Leaf node operations
+	if isLeftSibling {
+		// Sibling is on the left.
+		// Shifting node's keys & pointers to the right to make room for the
+		// key & pointer to be inserted.
+		for i := node.Numkeys; i > 0; i-- {
+			node.Keys[i] = node.Keys[i-1]
+			node.Pointers[i] = node.Pointers[i-1]
+		}
+
+		// Since this is a leaf node, we don't need to use `kPrime`.
+		node.Keys[0] = sibling.Keys[sibling.Numkeys-1]
+		node.Pointers[0] = sibling.Pointers[sibling.Numkeys-1]
+		// We need to update the parent's key to the newly inserted key
+		// since it'll be placed in index 0.
+		node.Parent.Keys[kPrimeIdx] = node.Keys[0]
+		node.Numkeys++
+		// Set the borrowed key & pointer to nil.
+		sibling.Keys[sibling.Numkeys-1] = nil
+		sibling.Pointers[sibling.Numkeys-1] = nil
+		sibling.Numkeys--
+
+		return
 	}
 
+	// Sibling is on the right.
+	node.Keys[node.Numkeys] = sibling.Keys[0]
+	node.Pointers[node.Numkeys] = sibling.Pointers[0]
+	// Updating the key is required since sibling's index 0 key is changing.
+	// Sibling's index 1 key will become index 0 key after shifting.
+	node.Parent.Keys[kPrimeIdx] = sibling.Keys[1]
 	node.Numkeys++
+	// Shifting sibling's keys & pointers to the left by one.
+	for i := 0; i < sibling.Numkeys-1; i++ {
+		sibling.Keys[i] = sibling.Keys[i+1]
+		sibling.Pointers[i] = sibling.Pointers[i+1]
+		sibling.Keys[i+1] = nil
+		sibling.Pointers[i+1] = nil
+	}
+
 	sibling.Numkeys--
+}
+
+func (t *BTree) mergeNodes(node, sibling *BTreeNode, isLeftSibling bool, kPrime []byte) error {
+	if !isLeftSibling {
+		tmp := node
+		node = sibling
+		sibling = tmp
+	}
+
+	insertionIndex := sibling.Numkeys
+	if !node.IsLeaf {
+		// `kPrime` needs to be added first to ensure tree balance,
+		// and to make the final sum of the keys less than pointers by 1.
+		// If we add keys & pointers without `kPrime`, not only will the
+		// tree balance break, the final keys length will be less than
+		// pointers by 2.
+		sibling.Keys[insertionIndex] = kPrime
+		sibling.Numkeys++
+
+		j := 0
+		i := insertionIndex + 1
+		for ; j < node.Numkeys; j++ {
+			sibling.Keys[i] = node.Keys[j]
+			sibling.Pointers[i] = node.Pointers[j]
+			sibling.Pointers[i].(*BTreeNode).Parent = sibling
+			i++
+		}
+		sibling.Pointers[i] = node.Pointers[j]
+		sibling.Pointers[i].(*BTreeNode).Parent = sibling
+	} else {
+		i := insertionIndex
+		for j := 0; i < node.Numkeys; j++ {
+			sibling.Keys[i] = node.Keys[j]
+			sibling.Pointers[i] = node.Pointers[j]
+			i++
+		}
+	}
+
+	sibling.Numkeys += node.Numkeys
+	return t.deleteEntry(node.Parent, kPrime, node)
 }
 
 func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
@@ -493,7 +496,7 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 	for i := keyIdx + 1; i < node.Numkeys; i++ {
 		node.Keys[i-1] = node.Keys[i]
 	}
-	// Reset the remvoed key
+	// Reset the removed key
 	node.Keys[node.Numkeys-1] = nil
 
 	numPointers := node.Numkeys
@@ -509,9 +512,19 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 	for i := pointerIdx + 1; i < numPointers; i++ {
 		node.Pointers[i-1] = node.Pointers[i]
 	}
+
 	// Reset the removed pointer
 	node.Pointers[numPointers-1] = nil
 	node.Numkeys--
+
+	if node.IsLeaf && keyIdx == 0 && node.Numkeys > 0 {
+		// We need to set the parent key to node key in index 0 since
+		// it has changed.
+		oldKeyIdxInParent := getKeyIndex(node.Parent, key)
+		if oldKeyIdxInParent > 0 {
+			node.Parent.Keys[oldKeyIdxInParent] = node.Keys[0]
+		}
+	}
 
 	return nil
 }
