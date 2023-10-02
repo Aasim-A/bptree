@@ -1,9 +1,10 @@
 package bptree
 
 import (
-	"crypto/rand"
+	rand "crypto/rand"
 	"errors"
 	"fmt"
+	mathRand "math/rand"
 	"reflect"
 	"testing"
 )
@@ -402,6 +403,92 @@ func TestUpdateNotFound(t *testing.T) {
 	err = tree.Update(key2, val)
 	if err == nil {
 		t.Fatal("Expected error but got nil")
+	}
+}
+
+func TestDeleteEmptyRoot(t *testing.T) {
+	tree := NewTree()
+	err := tree.Delete([]byte("01"))
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+
+	if err != KEY_NOT_FOUND_ERROR {
+		t.Fatalf("expected %v but got %v", KEY_NOT_FOUND_ERROR, err)
+	}
+}
+
+func TestDeleteNotFound(t *testing.T) {
+	tree := NewTree()
+	err := tree.Insert([]byte("1"), []byte("v1"))
+	if err != nil {
+		t.Fatalf("expected nil but got %v", err)
+	}
+
+	err = tree.Delete([]byte("2"))
+	if err == nil {
+		t.Fatal("Expected error but got nil")
+	}
+
+	if err != KEY_NOT_FOUND_ERROR {
+		t.Fatalf("expected %v but got %v", KEY_NOT_FOUND_ERROR, err)
+	}
+}
+
+func TestDeleteAscending(t *testing.T) {
+	tree := NewTree()
+	err := ascendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatalf("Expected nil but got %v", err)
+	}
+
+	err = ascendingLoop(func(key, val []byte) error {
+		return tree.Delete(key)
+	})
+	if err != nil {
+		t.Fatalf("Expected nil but got %v", err)
+	}
+}
+
+func TestDeleteDescending(t *testing.T) {
+	tree := NewTree()
+	err := descendingLoop(func(key, val []byte) error {
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatalf("Expected nil but got %v", err)
+	}
+
+	err = descendingLoop(func(key, val []byte) error {
+		return tree.Delete(key)
+	})
+	if err != nil {
+		t.Fatalf("Expected nil but got %v", err)
+	}
+}
+
+func TestDeleteRandom(t *testing.T) {
+	tree := NewTree()
+	keys := make([][]byte, 0, MULTIPLE_TEST_COUNT)
+	err := descendingLoop(func(key, val []byte) error {
+		keys = append(keys, key)
+		return tree.Insert(key, val)
+	})
+	if err != nil {
+		t.Fatalf("Expected nil but got %v", err)
+	}
+
+	mathRand.Shuffle(len(keys), func(i, j int) {
+		keys[i], keys[j] = keys[j], keys[i]
+	})
+
+	for _, key := range keys {
+		err = tree.Delete(key)
+		if err != nil {
+			t.Fatalf("Expected nil but got %v", err)
+		}
 	}
 }
 
