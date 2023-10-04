@@ -9,7 +9,7 @@ func NewTree() *BTree {
 	return &BTree{root: nil}
 }
 
-// Order must not be less than 3.
+// Order must not be less than 4.
 const ORDER = 4
 
 // Ceil the division. eg. 7/2 = 3, 7%2 = 1. 3+1 = 4.
@@ -476,7 +476,7 @@ func (t *BTree) mergeNodes(node, sibling *BTreeNode, isLeftSibling bool, kPrime 
 		sibling.Pointers[i].(*BTreeNode).Parent = sibling
 	} else {
 		i := insertionIndex
-		for j := 0; i < node.Numkeys; j++ {
+		for j := 0; j < node.Numkeys; j++ {
 			sibling.Keys[i] = node.Keys[j]
 			sibling.Pointers[i] = node.Pointers[j]
 			i++
@@ -517,7 +517,7 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 	node.Pointers[numPointers-1] = nil
 	node.Numkeys--
 
-	if node.IsLeaf && keyIdx == 0 && node.Numkeys > 0 {
+	if node.IsLeaf && node.Parent != nil && keyIdx == 0 && node.Numkeys > 0 {
 		// We need to set the parent key to node key in index 0 since
 		// it has changed.
 		oldKeyIdxInParent := getKeyIndex(node.Parent, key)
@@ -676,8 +676,12 @@ func getPointerIndex(node *BTreeNode, pointer interface{}) int {
 		return idx
 	}
 
-	// Pointers length is larger than keys length by 1
-	for i := 0; i < node.Numkeys+1; i++ {
+	nonLeafNodeAdjustment := 0
+	if !node.IsLeaf {
+		nonLeafNodeAdjustment = 1
+	}
+
+	for i := 0; i < node.Numkeys+nonLeafNodeAdjustment; i++ {
 		if node.Pointers[i] == pointer {
 			idx = i
 			break
