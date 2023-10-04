@@ -40,9 +40,13 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 		return nil, KEY_NOT_FOUND_ERROR
 	}
 
-	leaf := t.findLeaf(key)
-	if leaf == nil {
-		return nil, KEY_NOT_FOUND_ERROR
+	if len(key) != t.keySize {
+		return nil, INVALID_KEY_SIZE_ERROR
+	}
+
+	leaf, err := t.findLeaf(key)
+	if err != nil {
+		return nil, err
 	}
 
 	idx := getKeyIndex(leaf, key)
@@ -50,7 +54,12 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 		return nil, KEY_NOT_FOUND_ERROR
 	}
 
-	return leaf.Pointers[idx].(*Record), nil
+	rec, ok := leaf.Pointers[idx].(*Record)
+	if !ok {
+		return nil, TYPE_CONVERSION_ERROR
+	}
+
+	return rec, nil
 }
 
 func (t *BTree) Update(key, newValue []byte) error {
@@ -59,9 +68,13 @@ func (t *BTree) Update(key, newValue []byte) error {
 		return KEY_NOT_FOUND_ERROR
 	}
 
-	leaf := t.findLeaf(key)
-	if leaf == nil {
-		return KEY_NOT_FOUND_ERROR
+	if len(key) != t.keySize {
+		return INVALID_KEY_SIZE_ERROR
+	}
+
+	leaf, err := t.findLeaf(key)
+	if err != nil {
+		return err
 	}
 
 	idx := getKeyIndex(leaf, key)
@@ -78,11 +91,11 @@ func (t *BTree) Update(key, newValue []byte) error {
 func (t *BTree) Insert(key, value []byte) error {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
-		return KEY_NOT_FOUND_ERROR
+		return INVALID_KEY_ERROR
 	}
 
-	leaf := t.findLeaf(key)
-	if leaf != nil {
+	leaf, err := t.findLeaf(key)
+	if err == nil {
 		idx := getKeyIndex(leaf, key)
 		if idx > -1 {
 			return KEY_ALREADY_EXISTS_ERROR
@@ -109,14 +122,13 @@ func (t *BTree) Insert(key, value []byte) error {
 		return nil
 	}
 
-	t.recursivelySplitAndInsert(leaf, key, pointer)
-	return nil
+	return t.recursivelySplitAndInsert(leaf, key, pointer)
 }
 
-func (t *BTree) findLeaf(key []byte) *BTreeNode {
+func (t *BTree) findLeaf(key []byte) (*BTreeNode, error) {
 	node := t.root
 	if node == nil || key == nil {
-		return nil
+		return nil, KEY_NOT_FOUND_ERROR
 	}
 
 	for !node.IsLeaf {
@@ -129,13 +141,18 @@ func (t *BTree) findLeaf(key []byte) *BTreeNode {
 			}
 		}
 
-		node = node.Pointers[i].(*BTreeNode)
+		n, ok := node.Pointers[i].(*BTreeNode)
+		if !ok {
+			return nil, TYPE_CONVERSION_ERROR
+		}
+
+		node = n
 	}
 
-	return node
+	return node, nil
 }
 
-func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer interface{}) {
+func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer interface{}) error {
 	var newNode *BTreeNode
 	if node.IsLeaf {
 		newNode = makeLeaf()
@@ -192,32 +209,36 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 				newNode.Numkeys++
 			}
 
-			tempNode.Pointers[i+nodePointerAdjustment].(*BTreeNode).Parent = newNode
+			ptr, ok := tempNode.Pointers[i+nodePointerAdjustment].(*BTreeNode)
+			if !ok {
+				return TYPE_CONVERSION_ERROR
+			}
+
+			ptr.Parent = newNode
 		}
 		newNode.Pointers[i-ORDER_HALF] = tempNode.Pointers[i+nodePointerAdjustment]
 	}
 
 	if node == t.root {
 		t.splitRootAndInsert(node, newNode, tempNode.Keys[ORDER_HALF])
-		return
+		return nil
 	}
 
 	if node.Parent.Numkeys < ORDER-1 {
 		if node.IsLeaf {
 			insertIntoNode(node.Parent, newNode.Keys[0], newNode)
-			return
+			return nil
 		}
 
 		insertIntoNode(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
-		return
+		return nil
 	}
 
 	if node.IsLeaf {
-		t.recursivelySplitAndInsert(node.Parent, newNode.Keys[0], newNode)
-		return
+		return t.recursivelySplitAndInsert(node.Parent, newNode.Keys[0], newNode)
 	}
 
-	t.recursivelySplitAndInsert(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
+	return t.recursivelySplitAndInsert(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
 }
 
 func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToParent []byte) {
@@ -242,9 +263,9 @@ func (t *BTree) Delete(key []byte) error {
 		return KEY_NOT_FOUND_ERROR
 	}
 
-	leaf := t.findLeaf(key)
-	if leaf == nil {
-		return KEY_NOT_FOUND_ERROR
+	leaf, err := t.findLeaf(key)
+	if err != nil {
+		return err
 	}
 
 	idx := getKeyIndex(leaf, key)
@@ -262,8 +283,7 @@ func (t *BTree) deleteEntry(node *BTreeNode, key []byte, pointer interface{}) er
 	}
 
 	if node == t.root {
-		t.adjustRoot()
-		return nil
+		return t.adjustRoot()
 	}
 
 	minKeys := ORDER_HALF - 1
@@ -286,12 +306,11 @@ func (t *BTree) deleteEntry(node *BTreeNode, key []byte, pointer interface{}) er
 	kPrime := node.Parent.Keys[kPrimeIdx]
 	sibling, ok := node.Parent.Pointers[siblingIdx].(*BTreeNode)
 	if !ok {
-		fmt.Println("hhh")
+		return TYPE_CONVERSION_ERROR
 	}
 
 	if sibling.Numkeys > minKeys {
-		borrowFromSibling(node, sibling, siblingIdx < nodeIdx, kPrime, kPrimeIdx)
-		return nil
+		return borrowFromSibling(node, sibling, siblingIdx < nodeIdx, kPrime, kPrimeIdx)
 	}
 
 	return t.mergeNodes(node, sibling, siblingIdx < nodeIdx, kPrime)
@@ -309,39 +328,27 @@ func getSiblingIndex(node *BTreeNode) int {
 	return siblingIdx
 }
 
-func (t *BTree) adjustRoot() {
+func (t *BTree) adjustRoot() error {
 	if t.root.Numkeys > 0 {
-		return
+		return nil
 	}
 
 	var newRoot *BTreeNode
 	if !t.root.IsLeaf {
-		newRoot = t.root.Pointers[0].(*BTreeNode)
+		n, ok := t.root.Pointers[0].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		newRoot = n
 		newRoot.Parent = nil
 	}
 
 	t.root = newRoot
+	return nil
 }
 
-func getSiblings(parent *BTreeNode, nodePointerIndex int) (*BTreeNode, *BTreeNode) {
-	var left, right *BTreeNode
-	if nodePointerIndex-1 > -1 {
-		left = parent.Pointers[nodePointerIndex-1].(*BTreeNode)
-	}
-
-	numPointers := parent.Numkeys
-	if !parent.IsLeaf {
-		numPointers++
-	}
-
-	if nodePointerIndex+1 < numPointers {
-		right = parent.Pointers[nodePointerIndex+1].(*BTreeNode)
-	}
-
-	return left, right
-}
-
-func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) {
+func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) error {
 	if !node.IsLeaf {
 		if isLeftSibling {
 			// Sibling is on the left.
@@ -362,7 +369,12 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 			node.Pointers[0] = sibling.Pointers[sibling.Numkeys]
 			// We need to set the parent of the borrowed pointer to node since its
 			// parent is changing.
-			node.Pointers[0].(*BTreeNode).Parent = node
+			ptr, ok := node.Pointers[0].(*BTreeNode)
+			if !ok {
+				return TYPE_CONVERSION_ERROR
+			}
+
+			ptr.Parent = node
 			// Update the parent key with the key to be removed from sibling.
 			node.Parent.Keys[kPrimeIdx] = sibling.Keys[sibling.Numkeys-1]
 			node.Numkeys++
@@ -371,7 +383,7 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 			sibling.Pointers[sibling.Numkeys] = nil
 			sibling.Numkeys--
 
-			return
+			return nil
 		}
 
 		// Sibling is on the right.
@@ -380,7 +392,12 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 		node.Pointers[node.Numkeys+1] = sibling.Pointers[0]
 		// We need to set the parent of the borrowed pointer to node since its
 		// parent is changing.
-		node.Pointers[node.Numkeys+1].(*BTreeNode).Parent = node
+		ptr, ok := node.Pointers[node.Numkeys+1].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		ptr.Parent = node
 		// Update the parent key with the key to be removed from sibling.
 		node.Parent.Keys[kPrimeIdx] = sibling.Keys[0]
 		node.Numkeys++
@@ -401,7 +418,7 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 		sibling.Pointers[i+1] = nil
 		sibling.Numkeys--
 
-		return
+		return nil
 	}
 
 	// Leaf node operations
@@ -426,7 +443,7 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 		sibling.Pointers[sibling.Numkeys-1] = nil
 		sibling.Numkeys--
 
-		return
+		return nil
 	}
 
 	// Sibling is on the right.
@@ -445,6 +462,7 @@ func borrowFromSibling(node, sibling *BTreeNode, isLeftSibling bool, kPrime []by
 	}
 
 	sibling.Numkeys--
+	return nil
 }
 
 func (t *BTree) mergeNodes(node, sibling *BTreeNode, isLeftSibling bool, kPrime []byte) error {
@@ -469,11 +487,21 @@ func (t *BTree) mergeNodes(node, sibling *BTreeNode, isLeftSibling bool, kPrime 
 		for ; j < node.Numkeys; j++ {
 			sibling.Keys[i] = node.Keys[j]
 			sibling.Pointers[i] = node.Pointers[j]
-			sibling.Pointers[i].(*BTreeNode).Parent = sibling
+			ptr, ok := sibling.Pointers[i].(*BTreeNode)
+			if !ok {
+				return TYPE_CONVERSION_ERROR
+			}
+
+			ptr.Parent = sibling
 			i++
 		}
 		sibling.Pointers[i] = node.Pointers[j]
-		sibling.Pointers[i].(*BTreeNode).Parent = sibling
+		ptr, ok := sibling.Pointers[i].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		ptr.Parent = sibling
 	} else {
 		i := insertionIndex
 		for j := 0; j < node.Numkeys; j++ {
@@ -529,10 +557,10 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 	return nil
 }
 
-func (t *BTree) Print(withPointers bool) {
+func (t *BTree) Print(withPointers bool) error {
 	if t.root == nil {
 		fmt.Println("Tree is empty")
-		return
+		return nil
 	}
 
 	queue := []*BTreeNode{t.root}
@@ -552,7 +580,12 @@ func (t *BTree) Print(withPointers bool) {
 			if !node.IsLeaf {
 				nodes := make([]*BTreeNode, node.Numkeys+1)
 				for i := range nodes {
-					nodes[i] = node.Pointers[i].(*BTreeNode)
+					n, ok := node.Pointers[i].(*BTreeNode)
+					if !ok {
+						return TYPE_CONVERSION_ERROR
+					}
+
+					nodes[i] = n
 				}
 
 				queue = append(queue, nodes...)
@@ -565,17 +598,24 @@ func (t *BTree) Print(withPointers bool) {
 
 		fmt.Println()
 	}
+
+	return nil
 }
 
-func (t *BTree) PrintLeaves() {
+func (t *BTree) PrintLeaves() error {
 	if t.root == nil {
 		fmt.Println("Tree is empty")
-		return
+		return nil
 	}
 
 	leaf := t.root
 	for !leaf.IsLeaf {
-		leaf = leaf.Pointers[0].(*BTreeNode)
+		l, ok := leaf.Pointers[0].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		leaf = l
 	}
 
 	for leaf != nil {
@@ -583,17 +623,24 @@ func (t *BTree) PrintLeaves() {
 		leaf = leaf.Next
 	}
 	fmt.Println()
+
+	return nil
 }
 
-func (t *BTree) PrintLeavesBackwards() {
+func (t *BTree) PrintLeavesBackwards() error {
 	if t.root == nil {
 		fmt.Println("Tree is empty")
-		return
+		return nil
 	}
 
 	leaf := t.root
 	for !leaf.IsLeaf {
-		leaf = leaf.Pointers[leaf.Numkeys].(*BTreeNode)
+		l, ok := leaf.Pointers[leaf.Numkeys].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		leaf = l
 	}
 
 	for leaf != nil {
@@ -601,6 +648,8 @@ func (t *BTree) PrintLeavesBackwards() {
 		leaf = leaf.Prev
 	}
 	fmt.Println()
+
+	return nil
 }
 
 func makeNode() *BTreeNode {

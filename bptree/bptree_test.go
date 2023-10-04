@@ -445,6 +445,12 @@ func TestDeleteAscending(t *testing.T) {
 	}
 
 	err = ascendingLoop(func(key, val []byte) error {
+		_, err := tree.Find(key)
+		if err != nil {
+			fmt.Println(string(key), string(val))
+			panic(err)
+		}
+
 		return tree.Delete(key)
 	})
 	if err != nil {
