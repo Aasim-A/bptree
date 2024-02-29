@@ -10,20 +10,32 @@ func NewTree() *BTree {
 }
 
 // Order must not be less than 4.
-const ORDER = 4
+const m_ORDER = 4
 
 // Ceil the division. eg. 7/2 = 3, 7%2 = 1. 3+1 = 4.
-const ORDER_HALF = ORDER/2 + (ORDER % 2)
+const m_ORDER_HALF = m_ORDER/2 + (m_ORDER % 2)
+
+const m_MASTER_PAGE_SIZE = 4096
+const m_PAGE_SIZE = 8192
+const m_GCM_IV_SIZE = 12
+const m_GCM_AUTH_SIZE = 16
+const m_DATA_SIZE = m_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
+
+type MasterPage struct {
+	root      uint64
+	pageCount uint64
+	keySize   uint16
+}
 
 type Record struct {
 	Value []byte
 }
 
 type BTreeNode struct {
+	IsLeaf   bool
 	Keys     [][]byte
 	Numkeys  int
 	Pointers []interface{}
-	IsLeaf   bool
 	Parent   *BTreeNode
 	Next     *BTreeNode
 	Prev     *BTreeNode
@@ -117,7 +129,7 @@ func (t *BTree) Insert(key, value []byte) error {
 		return INVALID_KEY_SIZE_ERROR
 	}
 
-	if leaf.Numkeys < ORDER-1 {
+	if leaf.Numkeys < m_ORDER-1 {
 		insertIntoNode(leaf, key, pointer)
 		return nil
 	}
@@ -165,8 +177,8 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 
 	newNode.Parent = node.Parent
 	tempNode := &BTreeNode{
-		Keys:     make([][]byte, ORDER),
-		Pointers: make([]interface{}, ORDER+1),
+		Keys:     make([][]byte, m_ORDER),
+		Pointers: make([]interface{}, m_ORDER+1),
 		IsLeaf:   node.IsLeaf,
 		Numkeys:  node.Numkeys,
 	}
@@ -183,9 +195,9 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 	insertIntoNode(tempNode, key, pointer)
 	// Reset numkeys to reflect new content.
 	node.Numkeys = 0
-	node.Keys = make([][]byte, ORDER-1)
-	node.Pointers = make([]interface{}, ORDER)
-	for i = 0; i < ORDER_HALF; i++ {
+	node.Keys = make([][]byte, m_ORDER-1)
+	node.Pointers = make([]interface{}, m_ORDER)
+	for i = 0; i < m_ORDER_HALF; i++ {
 		node.Keys[i] = tempNode.Keys[i]
 		node.Pointers[i] = tempNode.Pointers[i]
 		node.Numkeys++
@@ -199,13 +211,13 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		nodePointerAdjustment = 1
 	}
 
-	for i = ORDER_HALF; i < ORDER; i++ {
+	for i = m_ORDER_HALF; i < m_ORDER; i++ {
 		if node.IsLeaf {
-			newNode.Keys[i-ORDER_HALF] = tempNode.Keys[i]
+			newNode.Keys[i-m_ORDER_HALF] = tempNode.Keys[i]
 			newNode.Numkeys++
 		} else {
-			if i > ORDER_HALF {
-				newNode.Keys[i-ORDER_HALF-1] = tempNode.Keys[i]
+			if i > m_ORDER_HALF {
+				newNode.Keys[i-m_ORDER_HALF-1] = tempNode.Keys[i]
 				newNode.Numkeys++
 			}
 
@@ -216,21 +228,21 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 
 			ptr.Parent = newNode
 		}
-		newNode.Pointers[i-ORDER_HALF] = tempNode.Pointers[i+nodePointerAdjustment]
+		newNode.Pointers[i-m_ORDER_HALF] = tempNode.Pointers[i+nodePointerAdjustment]
 	}
 
 	if node == t.root {
-		t.splitRootAndInsert(node, newNode, tempNode.Keys[ORDER_HALF])
+		t.splitRootAndInsert(node, newNode, tempNode.Keys[m_ORDER_HALF])
 		return nil
 	}
 
-	if node.Parent.Numkeys < ORDER-1 {
+	if node.Parent.Numkeys < m_ORDER-1 {
 		if node.IsLeaf {
 			insertIntoNode(node.Parent, newNode.Keys[0], newNode)
 			return nil
 		}
 
-		insertIntoNode(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
+		insertIntoNode(node.Parent, tempNode.Keys[m_ORDER_HALF], newNode)
 		return nil
 	}
 
@@ -238,7 +250,7 @@ func (t *BTree) recursivelySplitAndInsert(node *BTreeNode, key []byte, pointer i
 		return t.recursivelySplitAndInsert(node.Parent, newNode.Keys[0], newNode)
 	}
 
-	return t.recursivelySplitAndInsert(node.Parent, tempNode.Keys[ORDER_HALF], newNode)
+	return t.recursivelySplitAndInsert(node.Parent, tempNode.Keys[m_ORDER_HALF], newNode)
 }
 
 func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToParent []byte) {
@@ -286,7 +298,7 @@ func (t *BTree) deleteEntry(node *BTreeNode, key []byte, pointer interface{}) er
 		return t.adjustRoot()
 	}
 
-	minKeys := ORDER_HALF - 1
+	minKeys := m_ORDER_HALF - 1
 	// We subtracted 1 to avoid '>='
 	if node.Numkeys > minKeys-1 {
 		return nil
@@ -654,9 +666,9 @@ func (t *BTree) PrintLeavesBackwards() error {
 
 func makeNode() *BTreeNode {
 	return &BTreeNode{
-		Keys:     make([][]byte, ORDER-1),
+		Keys:     make([][]byte, m_ORDER-1),
 		Numkeys:  0,
-		Pointers: make([]interface{}, ORDER),
+		Pointers: make([]interface{}, m_ORDER),
 		IsLeaf:   false,
 		Parent:   nil,
 		Next:     nil,
