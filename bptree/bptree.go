@@ -2,7 +2,9 @@ package bptree
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
+	"math"
 )
 
 func NewTree() *BTree {
@@ -19,7 +21,7 @@ const m_MASTER_PAGE_SIZE = 4096
 const m_PAGE_SIZE = 8192
 const m_GCM_IV_SIZE = 12
 const m_GCM_AUTH_SIZE = 16
-const m_DATA_SIZE = m_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
+const m_PAGE_DATA_SIZE = m_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
 
 type MasterPage struct {
 	root      uint64
@@ -39,6 +41,122 @@ type BTreeNode struct {
 	Parent   *BTreeNode
 	Next     *BTreeNode
 	Prev     *BTreeNode
+}
+
+type BTreeNode2 struct {
+	IsLeaf   bool
+	Numkeys  uint16
+	Parent   uint64
+	Next     uint64
+	Prev     uint64
+	Keysize  uint16
+	Keys     [][]byte
+	Pointers []interface{}
+}
+
+type BTreeDiskNode struct {
+	IsLeaf   byte
+	Numkeys  uint16
+	Parent   uint64
+	Next     uint64
+	Prev     uint64
+	Keysize  uint16
+	Keys     []byte
+	Pointers []byte
+}
+
+func (n *BTreeNode2) ToBytes() []byte {
+	nodeBytes := make([]byte, m_PAGE_DATA_SIZE)
+	if n.IsLeaf {
+		nodeBytes[0] = 1
+	}
+
+	binary.BigEndian.PutUint16(nodeBytes[1:3], n.Numkeys)
+	binary.BigEndian.PutUint64(nodeBytes[3:11], n.Parent)
+	binary.BigEndian.PutUint64(nodeBytes[11:19], n.Next)
+	binary.BigEndian.PutUint64(nodeBytes[19:27], n.Prev)
+	binary.BigEndian.PutUint16(nodeBytes[27:29], n.Keysize)
+
+	// Keys encoding
+	start := uint16(29)
+	end := start + n.Keysize
+	for _, key := range n.Keys {
+		copy(nodeBytes[start:end], key)
+
+		start = end
+		end += n.Keysize
+	}
+
+	// Pointers encoding
+	if n.IsLeaf {
+		for _, valInterface := range n.Pointers {
+			val := valInterface.([]byte)
+			dataLength := uint16(len(val))
+			end = start + 2
+			binary.BigEndian.PutUint16(nodeBytes[start:end], dataLength)
+
+			start = end // Resetting start to write the value
+			end += dataLength
+			copy(nodeBytes[start:end], val)
+			start = end // Resettings start to write the length
+		}
+
+	} else {
+		// In non-leaf nodes, we're storing pointers which are 8 bytes long
+		// so, we need to set the end accordingly
+		end = start + 8
+		for _, ptr := range n.Pointers {
+			binary.BigEndian.PutUint64(nodeBytes[start:end], ptr.(uint64))
+
+			start = end
+			end += 8
+		}
+	}
+
+	return nodeBytes
+}
+
+func BytesToNode(b []byte) *BTreeNode2 {
+	node := BTreeNode2{}
+
+	node.IsLeaf = b[0] == 1
+	node.Numkeys = binary.BigEndian.Uint16(b[1:3])
+	node.Parent = binary.BigEndian.Uint64(b[3:11])
+	node.Next = binary.BigEndian.Uint64(b[11:19])
+	node.Prev = binary.BigEndian.Uint64(b[19:27])
+	node.Keysize = binary.BigEndian.Uint16(b[27:29])
+	node.Keys = make([][]byte, node.Numkeys)
+	node.Pointers = make([]interface{}, node.Numkeys)
+
+	start := uint16(29)
+	end := start + node.Keysize
+	for i := uint16(0); i < node.Numkeys; i++ {
+		node.Keys[i] = make([]byte, node.Keysize)
+		copy(node.Keys[i], b[start:end])
+
+		start = end
+		end += node.Keysize
+	}
+
+	if node.IsLeaf {
+		for i := uint16(0); i < node.Numkeys; i++ {
+			end = start + 2
+			valueLength := binary.BigEndian.Uint16(b[start:end])
+			start = end
+			end += valueLength
+			node.Pointers[i] = b[start:end]
+			start = end
+		}
+	} else {
+		end = start + 8
+		for i := uint16(0); i < node.Numkeys; i++ {
+			node.Pointers[i] = binary.BigEndian.Uint64(b[start:end])
+			start = end
+			end += 8
+		}
+	}
+
+	return &node
 }
 
 type BTree struct {
@@ -104,6 +222,10 @@ func (t *BTree) Insert(key, value []byte) error {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
 		return INVALID_KEY_ERROR
+	}
+
+	if len(key) > math.MaxUint16 {
+		return INVALID_KEY_SIZE_ERROR
 	}
 
 	leaf, err := t.findLeaf(key)
