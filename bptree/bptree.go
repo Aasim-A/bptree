@@ -7,6 +7,17 @@ import (
 	"math"
 )
 
+// This DB consists of 3 parts, Head, one Master tree, and many subtrees.
+//
+// To make our db ACID (Atomicity, Consistency, Isolation, and Durability), we can divide the db into
+// multiple sub trees with a fixed size, let's say 100MB. On the condition that the upper (above the subtrees)
+// hierarchy is similar to that small size.
+// To make a new change, a copy of the target subtree will be created, when copying is finished, the pointer to the
+// old subtree will be changed to the newly created subtree, and the old one will become unused space. At the same time
+// the master tree will be copied as well, then the pointers of all the subtrees and the head will be linked to the new master tree.
+// If a subtree exceeds the fixed size, it will split into two subtrees. In general, the idea is that vertical distance
+// will be short above the subtrees and normal within the subtrees.
+
 func NewTree() *BTree {
 	return &BTree{root: nil}
 }
