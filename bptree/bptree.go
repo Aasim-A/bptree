@@ -40,10 +40,6 @@ type MasterPage struct {
 	keySize   uint16
 }
 
-type Record struct {
-	Value []byte
-}
-
 type BTreeNode struct {
 	IsLeaf   bool
 	Keys     [][]byte
@@ -175,7 +171,7 @@ type BTree struct {
 	keySize int
 }
 
-func (t *BTree) Find(key []byte) (*Record, error) {
+func (t *BTree) Find(key []byte) ([]byte, error) {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
 		return nil, KEY_NOT_FOUND_ERROR
@@ -195,12 +191,12 @@ func (t *BTree) Find(key []byte) (*Record, error) {
 		return nil, KEY_NOT_FOUND_ERROR
 	}
 
-	rec, ok := leaf.Pointers[idx].(*Record)
+	val, ok := leaf.Pointers[idx].([]byte)
 	if !ok {
 		return nil, TYPE_CONVERSION_ERROR
 	}
 
-	return rec, nil
+	return val, nil
 }
 
 func (t *BTree) Update(key, newValue []byte) error {
@@ -223,8 +219,7 @@ func (t *BTree) Update(key, newValue []byte) error {
 		return KEY_NOT_FOUND_ERROR
 	}
 
-	newValueRecord := &Record{newValue}
-	leaf.Pointers[idx] = newValueRecord
+	leaf.Pointers[idx] = newValue
 
 	return nil
 }
@@ -247,11 +242,10 @@ func (t *BTree) Insert(key, value []byte) error {
 		}
 	}
 
-	pointer := &Record{Value: value}
 	if t.root == nil {
 		t.root = makeLeaf()
 		t.root.Keys[0] = key
-		t.root.Pointers[0] = pointer
+		t.root.Pointers[0] = value
 		t.root.Numkeys++
 		t.keySize = len(key)
 
@@ -263,11 +257,11 @@ func (t *BTree) Insert(key, value []byte) error {
 	}
 
 	if leaf.Numkeys < m_ORDER-1 {
-		insertIntoNode(leaf, key, pointer)
+		insertIntoNode(leaf, key, value)
 		return nil
 	}
 
-	return t.recursivelySplitAndInsert(leaf, key, pointer)
+	return t.recursivelySplitAndInsert(leaf, key, value)
 }
 
 func (t *BTree) findLeaf(key []byte) (*BTreeNode, error) {
@@ -876,7 +870,14 @@ func getPointerIndex(node *BTreeNode, pointer interface{}) int {
 	}
 
 	for i := 0; i < node.Numkeys+nonLeafNodeAdjustment; i++ {
-		if node.Pointers[i] == pointer {
+		// We do this because pointer can either be []byte or uint64. []byte can't be compared using ==
+		val, ok := pointer.([]byte)
+		if ok {
+			if bytes.Compare(node.Pointers[i].([]byte), val) == 0 {
+				idx = i
+				break
+			}
+		} else if node.Pointers[i] == pointer {
 			idx = i
 			break
 		}

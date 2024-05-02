@@ -15,13 +15,13 @@ const RAND_KEY_LEN = 16
 func TestFindNilRoot(t *testing.T) {
 	tree := NewTree()
 	key := []byte("1")
-	rec, err := tree.Find(key)
+	res, err := tree.Find(key)
 	if err == nil {
 		t.Fatal("Expected error but got nil")
 	}
 
-	if rec != nil {
-		t.Fatalf("expected nil but got %v \n", rec)
+	if res != nil {
+		t.Fatalf("expected nil but got %v \n", res)
 	}
 }
 
@@ -33,13 +33,13 @@ func TestFind(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec, err := tree.Find(key2)
+	res, err := tree.Find(key2)
 	if err == nil {
 		t.Fatal("Expected error but got nil")
 	}
 
-	if rec != nil {
-		t.Fatalf("expected nil but got %v \n", rec)
+	if res != nil {
+		t.Fatalf("expected nil but got %v \n", res)
 	}
 }
 
@@ -51,17 +51,17 @@ func TestInsertNilRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec, err := tree.Find(key)
+	res, err := tree.Find(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if rec == nil {
+	if res == nil {
 		t.Fatal("Expected value but got nil")
 	}
 
-	if !reflect.DeepEqual(rec.Value, val) {
-		t.Fatalf("expected %v but got %v \n", val, rec.Value)
+	if !reflect.DeepEqual(res, val) {
+		t.Fatalf("expected %v but got %v \n", val, res)
 	}
 
 	if tree.root.Numkeys != 1 {
@@ -101,17 +101,17 @@ func TestMultipleInsertAscendingKeys(t *testing.T) {
 	}
 
 	err = ascendingLoop(func(key, val []byte) error {
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			return err
 		}
 
-		if rec == nil {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec))
+		if res == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, res))
 		}
 
-		if !reflect.DeepEqual(rec.Value, val) {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec.Value))
+		if !reflect.DeepEqual(res, val) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, res))
 		}
 
 		return nil
@@ -131,17 +131,17 @@ func TestMultipleInsertDescendingKeys(t *testing.T) {
 	}
 
 	err = descendingLoop(func(key, val []byte) error {
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			return err
 		}
 
-		if rec == nil {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec))
+		if res == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, res))
 		}
 
-		if !reflect.DeepEqual(rec.Value, val) {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, rec.Value))
+		if !reflect.DeepEqual(res, val) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", val, res))
 		}
 
 		return nil
@@ -170,17 +170,17 @@ func TestMultipleInsertRandomKeys(t *testing.T) {
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key := randKeys[i]
 		val := append([]byte("v"), key...)
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if rec == nil {
+		if res == nil {
 			t.Fatal("Expected result but got nil")
 		}
 
-		if !reflect.DeepEqual(rec.Value, val) {
-			t.Fatalf("expected %v but got %v \n", val, rec.Value)
+		if !reflect.DeepEqual(res, val) {
+			t.Fatalf("expected %v but got %v \n", val, res)
 		}
 	}
 }
@@ -198,17 +198,17 @@ func TestInsertSameKeyTwice(t *testing.T) {
 		t.Fatal("expected error but got nil")
 	}
 
-	rec, err := tree.Find(key)
+	res, err := tree.Find(key)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if rec == nil {
-		t.Fatalf("expected %v but got %v \n", val, rec)
+	if res == nil {
+		t.Fatalf("expected %v but got %v \n", val, res)
 	}
 
-	if !reflect.DeepEqual(rec.Value, val) {
-		t.Fatalf("expected %v but got %v \n", val, rec.Value)
+	if !reflect.DeepEqual(res, val) {
+		t.Fatalf("expected %v but got %v \n", val, res)
 	}
 
 	if tree.root.Numkeys != 1 {
@@ -229,30 +229,30 @@ func TestInsertSameValueTwice(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec1, err := tree.Find(key1)
+	res1, err := tree.Find(key1)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if rec1 == nil {
-		t.Fatalf("expected %v but got %v \n", val, rec1)
+	if res1 == nil {
+		t.Fatalf("expected %v but got %v \n", val, res1)
 	}
 
-	if !reflect.DeepEqual(rec1.Value, val) {
-		t.Fatalf("expected %v but got %v \n", val, rec1.Value)
+	if !reflect.DeepEqual(res1, val) {
+		t.Fatalf("expected %v but got %v \n", val, res1)
 	}
 
-	rec2, err := tree.Find(key2)
+	res2, err := tree.Find(key2)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if rec2 == nil {
-		t.Fatalf("expected %v but got %v \n", val, rec2)
+	if res2 == nil {
+		t.Fatalf("expected %v but got %v \n", val, res2)
 	}
 
-	if !reflect.DeepEqual(rec2.Value, val) {
-		t.Fatalf("expected %v but got %v \n", val, rec2.Value)
+	if !reflect.DeepEqual(res2, val) {
+		t.Fatalf("expected %v but got %v \n", val, res2)
 	}
 
 	if tree.root.Numkeys != 2 {
@@ -279,17 +279,17 @@ func TestMultipleUpdateAscending(t *testing.T) {
 
 	err = ascendingLoop(func(key, val []byte) error {
 		newVal := append([]byte("new v"), val...)
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			return err
 		}
 
-		if rec == nil {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec))
+		if res == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, res))
 		}
 
-		if !reflect.DeepEqual(rec.Value, newVal) {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec.Value))
+		if !reflect.DeepEqual(res, newVal) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, res))
 		}
 
 		return nil
@@ -318,17 +318,17 @@ func TestMultipleUpdateDescending(t *testing.T) {
 
 	err = descendingLoop(func(key, val []byte) error {
 		newVal := append([]byte("new v"), val...)
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			return err
 		}
 
-		if rec == nil {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec))
+		if res == nil {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, res))
 		}
 
-		if !reflect.DeepEqual(rec.Value, newVal) {
-			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, rec.Value))
+		if !reflect.DeepEqual(res, newVal) {
+			return errors.New(fmt.Sprintf("expected %v but got %v \n", newVal, res))
 		}
 
 		return nil
@@ -364,17 +364,17 @@ func TestMultipleUpdateRandomKeys(t *testing.T) {
 	for i := 0; i < MULTIPLE_TEST_COUNT; i++ {
 		key := randKeys[i]
 		newVal := append([]byte("new v"), key...)
-		rec, err := tree.Find(key)
+		res, err := tree.Find(key)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if rec == nil {
+		if res == nil {
 			t.Fatal("Expected result but got nil")
 		}
 
-		if !reflect.DeepEqual(rec.Value, newVal) {
-			t.Fatalf("expected %v but got %v \n", newVal, rec.Value)
+		if !reflect.DeepEqual(res, newVal) {
+			t.Fatalf("expected %v but got %v \n", newVal, res)
 		}
 	}
 }
