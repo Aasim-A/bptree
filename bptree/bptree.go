@@ -2,21 +2,9 @@ package bptree
 
 import (
 	"bytes"
-	"encoding/binary"
 	"fmt"
 	"math"
 )
-
-// This DB consists of 3 parts, Head, one Master tree, and many subtrees.
-//
-// To make our db ACID (Atomicity, Consistency, Isolation, and Durability), we can divide the db into
-// multiple sub trees with a fixed size, let's say 100MB. On the condition that the upper (above the subtrees)
-// hierarchy is similar to that small size.
-// To make a new change, a copy of the target subtree will be created, when copying is finished, the pointer to the
-// old subtree will be changed to the newly created subtree, and the old one will become unused space. At the same time
-// the master tree will be copied as well, then the pointers of all the subtrees and the head will be linked to the new master tree.
-// If a subtree exceeds the fixed size, it will split into two subtrees. In general, the idea is that vertical distance
-// will be short above the subtrees and normal within the subtrees.
 
 func NewTree() *BTree {
 	return &BTree{root: nil}
@@ -28,142 +16,18 @@ const m_ORDER = 4
 // Ceil the division. eg. 7/2 = 3, 7%2 = 1. 3+1 = 4.
 const m_ORDER_HALF = m_ORDER/2 + (m_ORDER % 2)
 
-const m_MASTER_PAGE_SIZE = 4096
-const m_PAGE_SIZE = 8192
-const m_GCM_IV_SIZE = 12
-const m_GCM_AUTH_SIZE = 16
-const m_PAGE_DATA_SIZE = m_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
-
-type MasterPage struct {
-	root      uint64
-	pageCount uint64
-	keySize   uint16
+type Record struct {
+	Value []byte
 }
 
 type BTreeNode struct {
-	IsLeaf   bool
 	Keys     [][]byte
 	Numkeys  int
 	Pointers []interface{}
+	IsLeaf   bool
 	Parent   *BTreeNode
 	Next     *BTreeNode
 	Prev     *BTreeNode
-}
-
-type BTreeNode2 struct {
-	IsLeaf   bool
-	Numkeys  uint16
-	Parent   uint64
-	Next     uint64
-	Prev     uint64
-	Keysize  uint16
-	Keys     [][]byte
-	Pointers []interface{}
-}
-
-type BTreeDiskNode struct {
-	IsLeaf   byte
-	Numkeys  uint16
-	Parent   uint64
-	Next     uint64
-	Prev     uint64
-	Keysize  uint16
-	Keys     []byte
-	Pointers []byte
-}
-
-func (n *BTreeNode2) ToBytes() []byte {
-	nodeBytes := make([]byte, m_PAGE_DATA_SIZE)
-	if n.IsLeaf {
-		nodeBytes[0] = 1
-	}
-
-	binary.BigEndian.PutUint16(nodeBytes[1:3], n.Numkeys)
-	binary.BigEndian.PutUint64(nodeBytes[3:11], n.Parent)
-	binary.BigEndian.PutUint64(nodeBytes[11:19], n.Next)
-	binary.BigEndian.PutUint64(nodeBytes[19:27], n.Prev)
-	binary.BigEndian.PutUint16(nodeBytes[27:29], n.Keysize)
-
-	// Keys encoding
-	start := uint16(29)
-	end := start + n.Keysize
-	for _, key := range n.Keys {
-		copy(nodeBytes[start:end], key)
-
-		start = end
-		end += n.Keysize
-	}
-
-	// Pointers encoding
-	if n.IsLeaf {
-		for _, valInterface := range n.Pointers {
-			val := valInterface.([]byte)
-			dataLength := uint16(len(val))
-			end = start + 2
-			binary.BigEndian.PutUint16(nodeBytes[start:end], dataLength)
-
-			start = end // Resetting start to write the value
-			end += dataLength
-			copy(nodeBytes[start:end], val)
-			start = end // Resettings start to write the length
-		}
-
-	} else {
-		// In non-leaf nodes, we're storing pointers which are 8 bytes long
-		// so, we need to set the end accordingly
-		end = start + 8
-		for _, ptr := range n.Pointers {
-			binary.BigEndian.PutUint64(nodeBytes[start:end], ptr.(uint64))
-
-			start = end
-			end += 8
-		}
-	}
-
-	return nodeBytes
-}
-
-func BytesToNode(b []byte) *BTreeNode2 {
-	node := BTreeNode2{}
-
-	node.IsLeaf = b[0] == 1
-	node.Numkeys = binary.BigEndian.Uint16(b[1:3])
-	node.Parent = binary.BigEndian.Uint64(b[3:11])
-	node.Next = binary.BigEndian.Uint64(b[11:19])
-	node.Prev = binary.BigEndian.Uint64(b[19:27])
-	node.Keysize = binary.BigEndian.Uint16(b[27:29])
-	node.Keys = make([][]byte, node.Numkeys)
-	node.Pointers = make([]interface{}, node.Numkeys)
-
-	start := uint16(29)
-	end := start + node.Keysize
-	for i := uint16(0); i < node.Numkeys; i++ {
-		node.Keys[i] = make([]byte, node.Keysize)
-		copy(node.Keys[i], b[start:end])
-
-		start = end
-		end += node.Keysize
-	}
-
-	if node.IsLeaf {
-		for i := uint16(0); i < node.Numkeys; i++ {
-			end = start + 2
-			valueLength := binary.BigEndian.Uint16(b[start:end])
-			start = end
-			end += valueLength
-			node.Pointers[i] = b[start:end]
-			start = end
-		}
-	} else {
-		end = start + 8
-		for i := uint16(0); i < node.Numkeys; i++ {
-			node.Pointers[i] = binary.BigEndian.Uint64(b[start:end])
-			start = end
-			end += 8
-		}
-	}
-
-	return &node
 }
 
 type BTree struct {
@@ -685,10 +549,13 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 	node.Numkeys--
 
 	if node.IsLeaf && node.Parent != nil && keyIdx == 0 && node.Numkeys > 0 {
-		// We need to set the parent key to node key in index 0 since
-		// it has changed.
+		// If the node still has keys after the deletion, we need to update the parent
+		// keys.
+		// If the first key of `node` was stored in the parent keys meaning the index
+		// of `key` is more than -1, then we need to update it to the key in index
+		// 0 of `node` since it has changed.
 		oldKeyIdxInParent := getKeyIndex(node.Parent, key)
-		if oldKeyIdxInParent > 0 {
+		if oldKeyIdxInParent > -1 {
 			node.Parent.Keys[oldKeyIdxInParent] = node.Keys[0]
 		}
 	}
