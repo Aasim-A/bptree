@@ -582,7 +582,11 @@ func (t *DiskBTree) deleteEntry(node *DiskBTreeNode, key []byte, pointer interfa
 		return nil
 	}
 
-	siblingIdx := getSiblingIndex(node)
+	siblingIdx, err := t.getSiblingIndex(node)
+	if err != nil {
+		return err
+	}
+
 	nodeIdx := siblingIdx + 1
 	kPrimeIdx := siblingIdx
 	if siblingIdx < 0 {
@@ -621,16 +625,21 @@ func (t *DiskBTree) deleteEntry(node *DiskBTreeNode, key []byte, pointer interfa
 	return t.mergeNodes(node, sibling, siblingIdx < nodeIdx, kPrime)
 }
 
-func getSiblingIndex(node *DiskBTreeNode) int {
+func (t *DiskBTree) getSiblingIndex(node *DiskBTreeNode) (int, error) {
 	siblingIdx := -1
-	for i := 0; i < node.Parent.Numkeys+1; i++ {
-		if node.Parent.Pointers[i] == node {
+	parent, err := t.readNode(node.Parent)
+	if err != nil {
+		return siblingIdx, err
+	}
+
+	for i := 0; i < int(parent.Numkeys+1); i++ {
+		if parent.Pointers[i] == node.Ptr {
 			siblingIdx = i - 1
 			break
 		}
 	}
 
-	return siblingIdx
+	return siblingIdx, nil
 }
 
 func (t *DiskBTree) adjustRoot() error {
@@ -1031,7 +1040,7 @@ func getInsertionIndex(node *DiskBTreeNode, key []byte) int {
 	return insertionIndex
 }
 
-// Returns the index of `key`.
+// Returns the index of 'key'.
 // If key is not found, it returns -1
 func getKeyIndex(node *DiskBTreeNode, key []byte) int {
 	idx := -1
