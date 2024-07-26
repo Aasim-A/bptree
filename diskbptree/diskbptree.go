@@ -8,8 +8,6 @@ import (
 	"io"
 	"math"
 	"os"
-
-	"bptree/bptree"
 )
 
 // This DB consists of 3 parts, Head, one Master tree, and many subtrees.
@@ -42,7 +40,7 @@ type DiskBTree struct {
 	masterPage *MasterPage
 }
 
-func NewDiskTree(filePath string) (*DiskBTree, error) {
+func NewTree(filePath string) (*DiskBTree, error) {
 	f, err := os.OpenFile(filePath, os.O_RDWR, 0700)
 	if err != nil {
 		return nil, err
@@ -103,6 +101,15 @@ func (t *DiskBTree) writeMasterPage() error {
 }
 
 func (t *DiskBTree) readNode(ptr uint64) (*DiskBTreeNode, error) {
+	if t.masterPage == nil {
+		return nil, errors.New("Tree is empty")
+	}
+
+	// Check if ptr is trying to read data more than dbFile size
+	if ptr > (t.masterPage.pageCount-1)*m_PAGE_SIZE+m_MASTER_PAGE_SIZE {
+		return nil, errors.New("Invalid read index")
+	}
+
 	nodeBytes := make([]byte, m_PAGE_SIZE)
 	_, err := t.dbFile.Seek(int64(ptr), io.SeekStart)
 	if err != nil {
@@ -114,7 +121,7 @@ func (t *DiskBTree) readNode(ptr uint64) (*DiskBTreeNode, error) {
 		return nil, err
 	}
 
-	if n != len(nodeBytes) {
+	if n != m_PAGE_SIZE {
 		return nil, errors.New("Unexpected size was read")
 	}
 
@@ -161,7 +168,7 @@ type DiskBTreeNode struct {
 }
 
 func (n *DiskBTreeNode) ToBytes() []byte {
-	nodeBytes := make([]byte, m_PAGE_DATA_SIZE)
+	nodeBytes := make([]byte, m_PAGE_SIZE)
 	if n.IsLeaf {
 		nodeBytes[0] = 1
 	}
@@ -175,8 +182,8 @@ func (n *DiskBTreeNode) ToBytes() []byte {
 	// Keys encoding
 	start := uint16(29)
 	end := start + n.Keysize
-	for _, key := range n.Keys {
-		copy(nodeBytes[start:end], key)
+	for i := uint16(0); i < n.Numkeys; i++ {
+		copy(nodeBytes[start:end], n.Keys[i])
 
 		start = end
 		end += n.Keysize
@@ -184,8 +191,8 @@ func (n *DiskBTreeNode) ToBytes() []byte {
 
 	// Pointers encoding
 	if n.IsLeaf {
-		for _, valInterface := range n.Pointers {
-			val := valInterface.([]byte)
+		for i := uint16(0); i < n.Numkeys; i++ {
+			val := n.Pointers[i].([]byte)
 			dataLength := uint16(len(val))
 			end = start + 2
 			binary.BigEndian.PutUint16(nodeBytes[start:end], dataLength)
@@ -200,8 +207,10 @@ func (n *DiskBTreeNode) ToBytes() []byte {
 		// In non-leaf nodes, we're storing pointers which are 8 bytes long
 		// so, we need to set the end accordingly
 		end = start + 8
-		for _, ptr := range n.Pointers {
-			binary.BigEndian.PutUint64(nodeBytes[start:end], ptr.(uint64))
+
+		// We do <= because in non leaf nodes, pointers are more than keys by 1
+		for i := uint16(0); i <= n.Numkeys; i++ {
+			binary.BigEndian.PutUint64(nodeBytes[start:end], n.Pointers[i].(uint64))
 
 			start = end
 			end += 8
@@ -221,8 +230,8 @@ func BytesToNode(b []byte, ptr uint64) *DiskBTreeNode {
 	node.Next = binary.BigEndian.Uint64(b[11:19])
 	node.Prev = binary.BigEndian.Uint64(b[19:27])
 	node.Keysize = binary.BigEndian.Uint16(b[27:29])
-	node.Keys = make([][]byte, node.Numkeys)
-	node.Pointers = make([]interface{}, node.Numkeys)
+	node.Keys = make([][]byte, m_ORDER-1)
+	node.Pointers = make([]interface{}, m_ORDER)
 
 	start := uint16(29)
 	end := start + node.Keysize
@@ -245,7 +254,9 @@ func BytesToNode(b []byte, ptr uint64) *DiskBTreeNode {
 		}
 	} else {
 		end = start + 8
-		for i := uint16(0); i < node.Numkeys; i++ {
+
+		// We do <= because in non leaf nodes, pointers are more than keys by 1
+		for i := uint16(0); i <= node.Numkeys; i++ {
 			node.Pointers[i] = binary.BigEndian.Uint64(b[start:end])
 			start = end
 			end += 8
@@ -257,11 +268,11 @@ func BytesToNode(b []byte, ptr uint64) *DiskBTreeNode {
 
 func (t *DiskBTree) Find(key []byte) ([]byte, error) {
 	if t.masterPage == nil || key == nil {
-		return nil, bptree.KEY_NOT_FOUND_ERROR
+		return nil, KEY_NOT_FOUND_ERROR
 	}
 
 	if len(key) != t.keySize {
-		return nil, bptree.INVALID_KEY_SIZE_ERROR
+		return nil, INVALID_KEY_SIZE_ERROR
 	}
 
 	leaf, err := t.findLeaf(key)
@@ -271,12 +282,12 @@ func (t *DiskBTree) Find(key []byte) ([]byte, error) {
 
 	idx := getKeyIndex(leaf, key)
 	if idx < 0 {
-		return nil, bptree.KEY_NOT_FOUND_ERROR
+		return nil, KEY_NOT_FOUND_ERROR
 	}
 
 	val, ok := leaf.Pointers[idx].([]byte)
 	if !ok {
-		return nil, bptree.TYPE_CONVERSION_ERROR
+		return nil, TYPE_CONVERSION_ERROR
 	}
 
 	return val, nil
@@ -284,11 +295,11 @@ func (t *DiskBTree) Find(key []byte) ([]byte, error) {
 
 func (t *DiskBTree) Update(key, newValue []byte) error {
 	if t.masterPage == nil || key == nil {
-		return bptree.KEY_NOT_FOUND_ERROR
+		return KEY_NOT_FOUND_ERROR
 	}
 
 	if len(key) != t.keySize {
-		return bptree.INVALID_KEY_SIZE_ERROR
+		return INVALID_KEY_SIZE_ERROR
 	}
 
 	leaf, err := t.findLeaf(key)
@@ -298,7 +309,7 @@ func (t *DiskBTree) Update(key, newValue []byte) error {
 
 	idx := getKeyIndex(leaf, key)
 	if idx < 0 {
-		return bptree.KEY_NOT_FOUND_ERROR
+		return KEY_NOT_FOUND_ERROR
 	}
 
 	leaf.Pointers[idx] = newValue
@@ -308,11 +319,11 @@ func (t *DiskBTree) Update(key, newValue []byte) error {
 
 func (t *DiskBTree) Insert(key, value []byte) error {
 	if key == nil || value == nil {
-		return bptree.INVALID_DATA_ERROR
+		return INVALID_DATA_ERROR
 	}
 
 	if len(key) > math.MaxUint16 {
-		return bptree.KEY_SIZE_TOO_LARGE
+		return KEY_SIZE_TOO_LARGE
 	}
 
 	if t.masterPage == nil {
@@ -320,10 +331,13 @@ func (t *DiskBTree) Insert(key, value []byte) error {
 		rootNode.Keys[0] = key
 		rootNode.Pointers[0] = value
 		rootNode.Numkeys++
+		rootNode.Keysize = uint16(len(key))
 		t.keySize = len(key)
 
-		t.masterPage.root = rootNode.Ptr
-		t.masterPage.pageCount = 1
+		t.masterPage = &MasterPage{
+			root:      rootNode.Ptr,
+			pageCount: 1,
+		}
 		err := t.writeMasterPage()
 		if err != nil {
 			return err
@@ -336,23 +350,17 @@ func (t *DiskBTree) Insert(key, value []byte) error {
 	if err == nil {
 		idx := getKeyIndex(leaf, key)
 		if idx > -1 {
-			return bptree.KEY_ALREADY_EXISTS_ERROR
+			return KEY_ALREADY_EXISTS_ERROR
 		}
 	}
 
 	if len(key) != t.keySize {
-		return bptree.INVALID_KEY_SIZE_ERROR
+		return INVALID_KEY_SIZE_ERROR
 	}
 
 	if leaf.Numkeys < m_ORDER-1 {
 		insertIntoNode(leaf, key, value)
-		err = t.writeNode(leaf.ToBytes(), leaf.Ptr)
-		if err != nil {
-			return err
-		}
-
-		t.masterPage.pageCount++
-		return t.writeMasterPage()
+		return t.writeNode(leaf.ToBytes(), leaf.Ptr)
 	}
 
 	return t.recursivelySplitAndInsert(leaf, key, value)
@@ -376,7 +384,7 @@ func (t *DiskBTree) findLeaf(key []byte) (*DiskBTreeNode, error) {
 
 		ptr, ok := node.Pointers[i].(uint64)
 		if !ok {
-			return nil, bptree.TYPE_CONVERSION_ERROR
+			return nil, TYPE_CONVERSION_ERROR
 		}
 
 		node, err = t.readNode(ptr)
@@ -395,6 +403,10 @@ func (t *DiskBTree) newPagePtr() uint64 {
 func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, pointer interface{}) error {
 	var newNode *DiskBTreeNode
 	newNodePtr := t.newPagePtr()
+
+	// Everytime we cann newPagePtr, we need to increment the page count
+	// to avoid getting the same ptr twice.
+	t.masterPage.pageCount++
 	if node.IsLeaf {
 		newNode = makeLeaf(newNodePtr)
 		newNode.Next = node.Next
@@ -404,6 +416,7 @@ func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, p
 		newNode = makeNode(newNodePtr)
 	}
 
+	newNode.Keysize = uint16(t.keySize)
 	newNode.Parent = node.Parent
 	tempNode := &DiskBTreeNode{
 		Keys:     make([][]byte, m_ORDER),
@@ -453,7 +466,7 @@ func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, p
 
 			ptr, ok := tempNode.Pointers[i+nodePointerAdjustment].(uint64)
 			if !ok {
-				return bptree.TYPE_CONVERSION_ERROR
+				return TYPE_CONVERSION_ERROR
 			}
 
 			childNode, err := t.readNode(ptr)
@@ -471,7 +484,7 @@ func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, p
 	}
 
 	if node.Ptr == t.masterPage.root {
-		// node and newNode are written to disk inside splitRootAndInsert
+		// masterpage, node and newNode are written to disk inside splitRootAndInsert
 		return t.splitRootAndInsert(node, newNode, tempNode.Keys[m_ORDER_HALF])
 	}
 
@@ -486,7 +499,6 @@ func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, p
 		return err
 	}
 
-	t.masterPage.pageCount++
 	err = t.writeMasterPage()
 	if err != nil {
 		return err
@@ -516,15 +528,17 @@ func (t *DiskBTree) recursivelySplitAndInsert(node *DiskBTreeNode, key []byte, p
 
 func (t *DiskBTree) splitRootAndInsert(node, newNode *DiskBTreeNode, nonLeafKeyToAddToParent []byte) error {
 	newParent := makeNode(t.newPagePtr())
+	t.masterPage.pageCount++
 	if node.IsLeaf {
 		newParent.Keys[0] = newNode.Keys[0]
 	} else {
 		newParent.Keys[0] = nonLeafKeyToAddToParent
 	}
 
-	newParent.Pointers[0] = node
-	newParent.Pointers[1] = newNode
+	newParent.Pointers[0] = node.Ptr
+	newParent.Pointers[1] = newNode.Ptr
 	newParent.Numkeys++
+	newParent.Keysize = uint16(t.keySize)
 	node.Parent = newParent.Ptr
 	newNode.Parent = newParent.Ptr
 
@@ -544,13 +558,12 @@ func (t *DiskBTree) splitRootAndInsert(node, newNode *DiskBTreeNode, nonLeafKeyT
 	}
 
 	t.masterPage.root = newParent.Ptr
-	t.masterPage.pageCount++
 	return t.writeMasterPage()
 }
 
 func (t *DiskBTree) Delete(key []byte) error {
 	if t.masterPage == nil || key == nil {
-		return bptree.KEY_NOT_FOUND_ERROR
+		return KEY_NOT_FOUND_ERROR
 	}
 
 	leaf, err := t.findLeaf(key)
@@ -560,7 +573,7 @@ func (t *DiskBTree) Delete(key []byte) error {
 
 	idx := getKeyIndex(leaf, key)
 	if idx < 0 {
-		return bptree.KEY_NOT_FOUND_ERROR
+		return KEY_NOT_FOUND_ERROR
 	}
 
 	return t.deleteEntry(leaf, key, leaf.Pointers[idx])
@@ -609,7 +622,7 @@ func (t *DiskBTree) deleteEntry(node *DiskBTreeNode, key []byte, pointer interfa
 	kPrime := nodeParent.Keys[kPrimeIdx]
 	siblingPtr, ok := nodeParent.Pointers[siblingIdx].(uint64)
 	if !ok {
-		return bptree.TYPE_CONVERSION_ERROR
+		return TYPE_CONVERSION_ERROR
 	}
 
 	sibling, err := t.readNode(siblingPtr)
@@ -619,7 +632,7 @@ func (t *DiskBTree) deleteEntry(node *DiskBTreeNode, key []byte, pointer interfa
 
 	if sibling.Numkeys > minKeys {
 		// here boiz
-		return borrowFromSibling(node, sibling, siblingIdx < nodeIdx, kPrime, kPrimeIdx)
+		return t.borrowFromSibling(node, sibling, siblingIdx < nodeIdx, kPrime, kPrimeIdx)
 	}
 
 	return t.mergeNodes(node, sibling, siblingIdx < nodeIdx, kPrime)
@@ -655,7 +668,7 @@ func (t *DiskBTree) adjustRoot() error {
 	if !rootNode.IsLeaf {
 		newRootPtr, ok := rootNode.Pointers[0].(uint64)
 		if !ok {
-			return bptree.TYPE_CONVERSION_ERROR
+			return TYPE_CONVERSION_ERROR
 		}
 
 		newRoot, err := t.readNode(newRootPtr)
@@ -679,7 +692,12 @@ func (t *DiskBTree) adjustRoot() error {
 	return t.dbFile.Truncate(0)
 }
 
-func borrowFromSibling(node, sibling *DiskBTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) error {
+func (t *DiskBTree) borrowFromSibling(node, sibling *DiskBTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) error {
+	nodeParent, err := t.readNode(node.Parent)
+	if err != nil {
+		return err
+	}
+
 	if !node.IsLeaf {
 		if isLeftSibling {
 			// Sibling is on the left.
@@ -698,102 +716,131 @@ func borrowFromSibling(node, sibling *DiskBTreeNode, isLeftSibling bool, kPrime 
 			// inaccessible.
 			node.Keys[0] = kPrime
 			node.Pointers[0] = sibling.Pointers[sibling.Numkeys]
+
 			// We need to set the parent of the borrowed pointer to node since its
 			// parent is changing.
-			ptr, ok := node.Pointers[0].(*BTreeNode)
+			borrowdChildPtr, ok := node.Pointers[0].(uint64)
 			if !ok {
-				return bptree.TYPE_CONVERSION_ERROR
+				return TYPE_CONVERSION_ERROR
 			}
 
-			ptr.Parent = node
+			borrowdChild, err := t.readNode(borrowdChildPtr)
+			if err != nil {
+				return err
+			}
+
+			borrowdChild.Parent = node.Ptr
+
 			// Update the parent key with the key to be removed from sibling.
-			node.Parent.Keys[kPrimeIdx] = sibling.Keys[sibling.Numkeys-1]
+			nodeParent.Keys[kPrimeIdx] = sibling.Keys[sibling.Numkeys-1]
 			node.Numkeys++
+
 			// Resetting the borrowed key & pointer.
 			sibling.Keys[sibling.Numkeys-1] = nil
 			sibling.Pointers[sibling.Numkeys] = nil
 			sibling.Numkeys--
 
-			return nil
-		}
+		} else {
 
-		// Sibling is on the right.
-		// The key to be inserted into node is also `kPrime` for the above mentioned reasons.
-		node.Keys[node.Numkeys] = kPrime
-		node.Pointers[node.Numkeys+1] = sibling.Pointers[0]
-		// We need to set the parent of the borrowed pointer to node since its
-		// parent is changing.
-		ptr, ok := node.Pointers[node.Numkeys+1].(*BTreeNode)
-		if !ok {
-			return bptree.TYPE_CONVERSION_ERROR
-		}
+			// Sibling is on the right.
+			// The key to be inserted into node is also `kPrime` for the above mentioned reasons.
+			node.Keys[node.Numkeys] = kPrime
+			node.Pointers[node.Numkeys+1] = sibling.Pointers[0]
 
-		ptr.Parent = node
-		// Update the parent key with the key to be removed from sibling.
-		node.Parent.Keys[kPrimeIdx] = sibling.Keys[0]
-		node.Numkeys++
-		// We need to shift sibling's keys & pointers to the left by one.
-		i := 0
-		for ; i < sibling.Numkeys-1; i++ {
-			sibling.Keys[i] = sibling.Keys[i+1]
+			// We need to set the parent of the borrowed pointer to node since its
+			// parent is changing.
+			borrowdChildPtr, ok := node.Pointers[node.Numkeys+1].(uint64)
+			if !ok {
+				return TYPE_CONVERSION_ERROR
+			}
+
+			borrowdChild, err := t.readNode(borrowdChildPtr)
+			if err != nil {
+				return err
+			}
+
+			borrowdChild.Parent = node.Parent
+
+			// Update the parent key with the key to be removed from sibling.
+			nodeParent.Keys[kPrimeIdx] = sibling.Keys[0]
+			node.Numkeys++
+
+			// We need to shift sibling's keys & pointers to the left by one.
+			i := uint16(0)
+			for ; i < sibling.Numkeys-1; i++ {
+				sibling.Keys[i] = sibling.Keys[i+1]
+				sibling.Pointers[i] = sibling.Pointers[i+1]
+				sibling.Keys[i+1] = nil
+				sibling.Pointers[i+1] = nil
+			}
+
+			// We need to account for the extra pointer since this is a non leaf node.
 			sibling.Pointers[i] = sibling.Pointers[i+1]
-			sibling.Keys[i+1] = nil
 			sibling.Pointers[i+1] = nil
-		}
-		// We need to account for the extra pointer since this is a non leaf node.
-		sibling.Pointers[i] = sibling.Pointers[i+1]
-		sibling.Pointers[i+1] = nil
 
-		// Set borrowed key & pointer to nil.
-		sibling.Keys[i] = nil
-		sibling.Pointers[i+1] = nil
-		sibling.Numkeys--
-
-		return nil
-	}
-
-	// Leaf node operations
-	if isLeftSibling {
-		// Sibling is on the left.
-		// Shifting node's keys & pointers to the right to make room for the
-		// key & pointer to be inserted.
-		for i := node.Numkeys; i > 0; i-- {
-			node.Keys[i] = node.Keys[i-1]
-			node.Pointers[i] = node.Pointers[i-1]
+			// Set borrowed key & pointer to nil.
+			sibling.Keys[i] = nil
+			sibling.Pointers[i+1] = nil
+			sibling.Numkeys--
 		}
 
-		// Since this is a leaf node, we don't need to use `kPrime`.
-		node.Keys[0] = sibling.Keys[sibling.Numkeys-1]
-		node.Pointers[0] = sibling.Pointers[sibling.Numkeys-1]
-		// We need to update the parent's key to the newly inserted key
-		// since it'll be placed in index 0.
-		node.Parent.Keys[kPrimeIdx] = node.Keys[0]
-		node.Numkeys++
-		// Set the borrowed key & pointer to nil.
-		sibling.Keys[sibling.Numkeys-1] = nil
-		sibling.Pointers[sibling.Numkeys-1] = nil
-		sibling.Numkeys--
+	} else {
 
-		return nil
+		// Leaf node operations
+		if isLeftSibling {
+			// Sibling is on the left.
+			// Shifting node's keys & pointers to the right to make room for the
+			// key & pointer to be inserted.
+			for i := node.Numkeys; i > 0; i-- {
+				node.Keys[i] = node.Keys[i-1]
+				node.Pointers[i] = node.Pointers[i-1]
+			}
+
+			// Since this is a leaf node, we don't need to use `kPrime`.
+			node.Keys[0] = sibling.Keys[sibling.Numkeys-1]
+			node.Pointers[0] = sibling.Pointers[sibling.Numkeys-1]
+			// We need to update the parent's key to the newly inserted key
+			// since it'll be placed in index 0.
+			nodeParent.Keys[kPrimeIdx] = node.Keys[0]
+			node.Numkeys++
+			// Set the borrowed key & pointer to nil.
+			sibling.Keys[sibling.Numkeys-1] = nil
+			sibling.Pointers[sibling.Numkeys-1] = nil
+			sibling.Numkeys--
+
+		} else {
+
+			// Sibling is on the right.
+			node.Keys[node.Numkeys] = sibling.Keys[0]
+			node.Pointers[node.Numkeys] = sibling.Pointers[0]
+			// Updating the key is required since sibling's index 0 key is changing.
+			// Sibling's index 1 key will become index 0 key after shifting.
+			nodeParent.Keys[kPrimeIdx] = sibling.Keys[1]
+			node.Numkeys++
+			// Shifting sibling's keys & pointers to the left by one.
+			for i := uint16(0); i < sibling.Numkeys-1; i++ {
+				sibling.Keys[i] = sibling.Keys[i+1]
+				sibling.Pointers[i] = sibling.Pointers[i+1]
+				sibling.Keys[i+1] = nil
+				sibling.Pointers[i+1] = nil
+			}
+
+			sibling.Numkeys--
+		}
 	}
 
-	// Sibling is on the right.
-	node.Keys[node.Numkeys] = sibling.Keys[0]
-	node.Pointers[node.Numkeys] = sibling.Pointers[0]
-	// Updating the key is required since sibling's index 0 key is changing.
-	// Sibling's index 1 key will become index 0 key after shifting.
-	node.Parent.Keys[kPrimeIdx] = sibling.Keys[1]
-	node.Numkeys++
-	// Shifting sibling's keys & pointers to the left by one.
-	for i := 0; i < sibling.Numkeys-1; i++ {
-		sibling.Keys[i] = sibling.Keys[i+1]
-		sibling.Pointers[i] = sibling.Pointers[i+1]
-		sibling.Keys[i+1] = nil
-		sibling.Pointers[i+1] = nil
+	// Persist the changes to disk
+	err = t.writeNode(node.ToBytes(), node.Ptr)
+	if err != nil {
+		return err
 	}
 
-	sibling.Numkeys--
-	return nil
+	err = t.writeNode(sibling.ToBytes(), sibling.Ptr)
+	if err != nil {
+		return err
+	}
+
+	return t.writeNode(nodeParent.ToBytes(), nodeParent.Ptr)
 }
 
 func (t *DiskBTree) mergeNodes(node, sibling *DiskBTreeNode, isLeftSibling bool, kPrime []byte) error {
@@ -813,29 +860,54 @@ func (t *DiskBTree) mergeNodes(node, sibling *DiskBTreeNode, isLeftSibling bool,
 		sibling.Keys[insertionIndex] = kPrime
 		sibling.Numkeys++
 
-		j := 0
+		j := uint16(0)
 		i := insertionIndex + 1
 		for ; j < node.Numkeys; j++ {
 			sibling.Keys[i] = node.Keys[j]
 			sibling.Pointers[i] = node.Pointers[j]
-			ptr, ok := sibling.Pointers[i].(*BTreeNode)
+			borrowdChildPtr, ok := sibling.Pointers[i].(uint64)
 			if !ok {
-				return bptree.TYPE_CONVERSION_ERROR
+				return TYPE_CONVERSION_ERROR
 			}
 
-			ptr.Parent = sibling
+			borrowdChild, err := t.readNode(borrowdChildPtr)
+			if err != nil {
+				return err
+			}
+
+			borrowdChild.Parent = sibling.Ptr
+			// TODO: Group borrowdChildredn writes to improve performance
+			err = t.writeNode(borrowdChild.ToBytes(), borrowdChildPtr)
+			if err != nil {
+				return err
+			}
+
 			i++
 		}
+
 		sibling.Pointers[i] = node.Pointers[j]
-		ptr, ok := sibling.Pointers[i].(*BTreeNode)
+		borrowdChildPtr, ok := sibling.Pointers[i].(uint64)
 		if !ok {
-			return bptree.TYPE_CONVERSION_ERROR
+			return TYPE_CONVERSION_ERROR
 		}
 
-		ptr.Parent = sibling
+		borrowdChild, err := t.readNode(borrowdChildPtr)
+		if err != nil {
+			return err
+		}
+
+		borrowdChild.Parent = sibling.Ptr
+
+		// TODO: Group borrowdChildredn writes to improve performance
+		err = t.writeNode(borrowdChild.ToBytes(), borrowdChildPtr)
+		if err != nil {
+			return err
+		}
+
 	} else {
+
 		i := insertionIndex
-		for j := 0; j < node.Numkeys; j++ {
+		for j := uint16(0); j < node.Numkeys; j++ {
 			sibling.Keys[i] = node.Keys[j]
 			sibling.Pointers[i] = node.Pointers[j]
 			i++
@@ -843,13 +915,28 @@ func (t *DiskBTree) mergeNodes(node, sibling *DiskBTreeNode, isLeftSibling bool,
 	}
 
 	sibling.Numkeys += node.Numkeys
-	return t.deleteEntry(node.Parent, kPrime, node)
+	err := t.writeNode(node.ToBytes(), node.Ptr)
+	if err != nil {
+		return err
+	}
+
+	err = t.writeNode(sibling.ToBytes(), sibling.Ptr)
+	if err != nil {
+		return err
+	}
+
+	nodeParent, err := t.readNode(node.Parent)
+	if err != nil {
+		return err
+	}
+
+	return t.deleteEntry(nodeParent, kPrime, node)
 }
 
 func (t *DiskBTree) removeFromNode(node *DiskBTreeNode, key []byte, pointer interface{}) error {
 	keyIdx := getKeyIndex(node, key)
 	if keyIdx < 0 {
-		return bptree.INVALID_KEY_INDEX_ERROR
+		return INVALID_KEY_INDEX_ERROR
 	}
 
 	for i := uint16(keyIdx + 1); i < node.Numkeys; i++ {
@@ -865,7 +952,7 @@ func (t *DiskBTree) removeFromNode(node *DiskBTreeNode, key []byte, pointer inte
 
 	pointerIdx := getPointerIndex(node, pointer)
 	if pointerIdx < 0 {
-		return bptree.INVALID_POINTER_INDEX_ERROR
+		return INVALID_POINTER_INDEX_ERROR
 	}
 
 	for i := uint16(pointerIdx + 1); i < numPointers; i++ {
@@ -898,12 +985,17 @@ func (t *DiskBTree) removeFromNode(node *DiskBTreeNode, key []byte, pointer inte
 }
 
 func (t *DiskBTree) Print(withPointers bool) error {
-	if t.root == nil {
+	if t.masterPage == nil {
 		fmt.Println("Tree is empty")
 		return nil
 	}
 
-	queue := []*BTreeNode{t.root}
+	rootNode, err := t.readNode(t.masterPage.root)
+	if err != nil {
+		return err
+	}
+
+	queue := []*DiskBTreeNode{rootNode}
 	for len(queue) > 0 {
 		levelSize := len(queue)
 		for i := 0; i < levelSize; i++ {
@@ -912,20 +1004,25 @@ func (t *DiskBTree) Print(withPointers bool) error {
 			fmt.Printf("%s", node.Keys[:node.Numkeys])
 			if withPointers {
 				if !node.IsLeaf {
-					fmt.Printf("%p ", node)
+					fmt.Printf("%d ", node.Ptr)
 				}
-				fmt.Printf("%p", node.Parent)
+				fmt.Print(node.Parent)
 			}
 
 			if !node.IsLeaf {
-				nodes := make([]*BTreeNode, node.Numkeys+1)
+				nodes := make([]*DiskBTreeNode, node.Numkeys+1)
 				for i := range nodes {
-					n, ok := node.Pointers[i].(*BTreeNode)
+					n, ok := node.Pointers[i].(uint64)
 					if !ok {
-						return bptree.TYPE_CONVERSION_ERROR
+						return TYPE_CONVERSION_ERROR
 					}
 
-					nodes[i] = n
+					ptrNode, err := t.readNode(n)
+					if err != nil {
+						return err
+					}
+
+					nodes[i] = ptrNode
 				}
 
 				queue = append(queue, nodes...)
@@ -943,51 +1040,87 @@ func (t *DiskBTree) Print(withPointers bool) error {
 }
 
 func (t *DiskBTree) PrintLeaves() error {
-	if t.root == nil {
+	if t.masterPage == nil {
 		fmt.Println("Tree is empty")
 		return nil
 	}
 
-	leaf := t.root
+	leaf, err := t.readNode(t.masterPage.root)
+	if err != nil {
+		return err
+	}
+
 	for !leaf.IsLeaf {
-		l, ok := leaf.Pointers[0].(*BTreeNode)
+		nonLeafNodePtr, ok := leaf.Pointers[0].(uint64)
 		if !ok {
-			return bptree.TYPE_CONVERSION_ERROR
+			return TYPE_CONVERSION_ERROR
 		}
 
-		leaf = l
+		nonLeafNode, err := t.readNode(nonLeafNodePtr)
+		if err != nil {
+			return err
+		}
+
+		leaf = nonLeafNode
 	}
 
 	for leaf != nil {
 		fmt.Print(leaf.Keys[:leaf.Numkeys])
-		leaf = leaf.Next
+		if leaf.Next == 0 {
+			break
+		}
+
+		nextLeaf, err := t.readNode(leaf.Next)
+		if err != nil {
+			return err
+		}
+
+		leaf = nextLeaf
 	}
+
 	fmt.Println()
 
 	return nil
 }
 
 func (t *DiskBTree) PrintLeavesBackwards() error {
-	if t.root == nil {
+	if t.masterPage == nil {
 		fmt.Println("Tree is empty")
 		return nil
 	}
 
-	leaf := t.root
+	leaf, err := t.readNode(t.masterPage.root)
+	if err != nil {
+		return err
+	}
+
 	for !leaf.IsLeaf {
-		l, ok := leaf.Pointers[leaf.Numkeys].(*BTreeNode)
+		nonLeafNodePtr, ok := leaf.Pointers[0].(uint64)
 		if !ok {
-			return bptree.TYPE_CONVERSION_ERROR
+			return TYPE_CONVERSION_ERROR
 		}
 
-		leaf = l
+		nonLeafNode, err := t.readNode(nonLeafNodePtr)
+		if err != nil {
+			return err
+		}
+
+		leaf = nonLeafNode
 	}
 
 	for leaf != nil {
 		fmt.Print(leaf.Keys[:leaf.Numkeys])
-		leaf = leaf.Prev
+		if leaf.Prev == 0 {
+			break
+		}
+
+		previousLeaf, err := t.readNode(leaf.Prev)
+		if err != nil {
+			return err
+		}
+
+		leaf = previousLeaf
 	}
-	fmt.Println()
 
 	return nil
 }
@@ -1012,27 +1145,32 @@ func makeLeaf(ptr uint64) *DiskBTreeNode {
 	return node
 }
 
-func insertIntoNode(node *DiskBTreeNode, key []byte, pointer interface{}) error {
+func insertIntoNode(node *DiskBTreeNode, key []byte, pointer interface{}) {
 	insertionIndex := getInsertionIndex(node, key)
-	nonLeafNodeAdjustment := 0
+	nonLeafNodeAdjustment := uint16(0)
 	if !node.IsLeaf {
 		nonLeafNodeAdjustment = 1
 	}
 
-	for i := int(node.Numkeys); i > insertionIndex; i-- {
+	for i := node.Numkeys; i > insertionIndex; i-- {
 		node.Keys[i] = node.Keys[i-1]
 		node.Pointers[i+nonLeafNodeAdjustment] = node.Pointers[i-1+nonLeafNodeAdjustment]
 	}
 
 	node.Keys[insertionIndex] = key
-	node.Pointers[insertionIndex+nonLeafNodeAdjustment] = pointer
+	if !node.IsLeaf {
+		nodeToBeInserted := pointer.(*DiskBTreeNode)
+		node.Pointers[insertionIndex+1] = nodeToBeInserted.Ptr
+	} else {
+		node.Pointers[insertionIndex] = pointer
+	}
+
 	node.Numkeys++
 }
 
 // Gets the index that `key` needs to be inserted into.
-// Returns -1 if `node` or `key` is nil.
-func getInsertionIndex(node *DiskBTreeNode, key []byte) int {
-	insertionIndex := 0
+func getInsertionIndex(node *DiskBTreeNode, key []byte) uint16 {
+	insertionIndex := uint16(0)
 	for insertionIndex < node.Numkeys && bytes.Compare(key, node.Keys[insertionIndex]) >= 0 {
 		insertionIndex++
 	}
@@ -1071,7 +1209,7 @@ func getPointerIndex(node *DiskBTreeNode, pointer interface{}) int {
 		nonLeafNodeAdjustment = 1
 	}
 
-	for i := 0; i < node.Numkeys+nonLeafNodeAdjustment; i++ {
+	for i := 0; i < int(node.Numkeys)+nonLeafNodeAdjustment; i++ {
 		// We do this because pointer can either be []byte or uint64. []byte can't be compared using ==
 		val, ok := pointer.([]byte)
 		if ok {
