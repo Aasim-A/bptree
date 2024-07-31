@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"math"
 	"os"
 )
@@ -34,9 +35,18 @@ const m_GCM_AUTH_SIZE = 16
 const m_MASTER_PAGE_DATA_SIZE = m_MASTER_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
 const m_PAGE_DATA_SIZE = m_PAGE_SIZE - m_GCM_IV_SIZE - m_GCM_AUTH_SIZE
 
+type DiskBTreeFile interface {
+	Read(b []byte) (int, error)
+	Write(b []byte) (int, error)
+	Seek(offset int64, whence int) (int64, error)
+	Truncate(size int64) error
+	Close() error
+	Stat() (fs.FileInfo, error)
+}
+
 type DiskBTree struct {
 	keySize    int
-	dbFile     *os.File
+	dbFile     DiskBTreeFile
 	masterPage *MasterPage
 }
 
@@ -46,6 +56,10 @@ func NewTree(filePath string) (*DiskBTree, error) {
 		return nil, err
 	}
 
+	return newTreeFromFile(f)
+}
+
+func newTreeFromFile(f DiskBTreeFile) (*DiskBTree, error) {
 	stats, err := f.Stat()
 	if err != nil {
 		return nil, err
@@ -689,7 +703,13 @@ func (t *DiskBTree) adjustRoot() error {
 
 	// We set the db file size to 0 i.e. deleting everything since the db is now empty.
 	// We want to avoid writing data with all zeros to avoid enc key prediction.
-	return t.dbFile.Truncate(0)
+	err = t.dbFile.Truncate(0)
+	if err != nil {
+		return err
+	}
+
+	_, err = t.dbFile.Seek(0, io.SeekStart)
+	return err
 }
 
 func (t *DiskBTree) borrowFromSibling(node, sibling *DiskBTreeNode, isLeftSibling bool, kPrime []byte, kPrimeIdx int) error {
