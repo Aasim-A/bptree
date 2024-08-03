@@ -181,6 +181,8 @@ type DiskBTreeNode struct {
 	Pointers []interface{}
 }
 
+// 1b isLeaf, 2b numkeys, 8b parent, 8b next, 8b prev, 2b keysize,
+// (keysize * numkeys) keys, isLeaf ? ((2b dataLength + data) * numkeys) else ((numkeys + 1) * 8)
 func (n *DiskBTreeNode) ToBytes() []byte {
 	nodeBytes := make([]byte, m_PAGE_SIZE)
 	if n.IsLeaf {
