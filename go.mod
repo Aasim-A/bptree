@@ -1,4 +1,4 @@
-module bptree
+module github.com/Aasim-A/bptree
 
 go 1.21.0
 

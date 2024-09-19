@@ -1,4 +1,4 @@
-package bptree
+package memory
 
 import (
 	"bytes"
@@ -6,6 +6,7 @@ import (
 	"math"
 )
 
+// Returns a pointer to a new in-memory B+ tree
 func NewTree() *BTree {
 	return &BTree{root: nil}
 }
@@ -35,6 +36,7 @@ type BTree struct {
 	keySize int
 }
 
+// Find the value associated with a key
 func (t *BTree) Find(key []byte) ([]byte, error) {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
@@ -63,6 +65,7 @@ func (t *BTree) Find(key []byte) ([]byte, error) {
 	return val, nil
 }
 
+// Update the value of an existing key in the tree
 func (t *BTree) Update(key, newValue []byte) error {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
@@ -88,6 +91,7 @@ func (t *BTree) Update(key, newValue []byte) error {
 	return nil
 }
 
+// Insert a new key/value into the tree
 func (t *BTree) Insert(key, value []byte) error {
 	// We do this before findLeaf for performance reasons.
 	if key == nil {
@@ -126,6 +130,124 @@ func (t *BTree) Insert(key, value []byte) error {
 	}
 
 	return t.recursivelySplitAndInsert(leaf, key, value)
+}
+
+// Delete an entry from the tree with the given `key`
+func (t *BTree) Delete(key []byte) error {
+	// We do this before findLeaf for performance reasons.
+	if key == nil {
+		return KEY_NOT_FOUND_ERROR
+	}
+
+	leaf, err := t.findLeaf(key)
+	if err != nil {
+		return err
+	}
+
+	idx := getKeyIndex(leaf, key)
+	if idx < 0 {
+		return KEY_NOT_FOUND_ERROR
+	}
+
+	return t.deleteEntry(leaf, key, leaf.Pointers[idx])
+}
+
+// Print the tree
+func (t *BTree) Print(withPointers bool) error {
+	if t.root == nil {
+		fmt.Println("Tree is empty")
+		return nil
+	}
+
+	queue := []*BTreeNode{t.root}
+	for len(queue) > 0 {
+		levelSize := len(queue)
+		for i := 0; i < levelSize; i++ {
+			node := queue[0]
+			queue = queue[1:]
+			fmt.Printf("%s", node.Keys[:node.Numkeys])
+			if withPointers {
+				if !node.IsLeaf {
+					fmt.Printf("%p ", node)
+				}
+				fmt.Printf("%p", node.Parent)
+			}
+
+			if !node.IsLeaf {
+				nodes := make([]*BTreeNode, node.Numkeys+1)
+				for i := range nodes {
+					n, ok := node.Pointers[i].(*BTreeNode)
+					if !ok {
+						return TYPE_CONVERSION_ERROR
+					}
+
+					nodes[i] = n
+				}
+
+				queue = append(queue, nodes...)
+			}
+
+			if i < levelSize-1 {
+				fmt.Print(", ")
+			}
+		}
+
+		fmt.Println()
+	}
+
+	return nil
+}
+
+// Print the leaves of the tree
+func (t *BTree) PrintLeaves() error {
+	if t.root == nil {
+		fmt.Println("Tree is empty")
+		return nil
+	}
+
+	leaf := t.root
+	for !leaf.IsLeaf {
+		l, ok := leaf.Pointers[0].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		leaf = l
+	}
+
+	for leaf != nil {
+		fmt.Print(leaf.Keys[:leaf.Numkeys])
+		leaf = leaf.Next
+	}
+	fmt.Println()
+
+	return nil
+}
+
+// Print the leaves of the tree in reverse, i.e. starting from the end to the beginning
+func (t *BTree) PrintLeavesBackwards() error {
+	if t.root == nil {
+		fmt.Println("Tree is empty")
+		return nil
+	}
+
+	leaf := t.root
+	for !leaf.IsLeaf {
+		l, ok := leaf.Pointers[leaf.Numkeys].(*BTreeNode)
+		if !ok {
+			return TYPE_CONVERSION_ERROR
+		}
+
+		leaf = l
+	}
+
+	for leaf != nil {
+		fmt.Print(leaf.Keys[:leaf.Numkeys])
+		leaf = leaf.Prev
+	}
+	fmt.Println()
+
+	return nil
 }
 
 func (t *BTree) findLeaf(key []byte) (*BTreeNode, error) {
@@ -258,25 +380,6 @@ func (t *BTree) splitRootAndInsert(node, newNode *BTreeNode, nonLeafKeyToAddToPa
 	node.Parent = newParent
 	newNode.Parent = newParent
 	t.root = newParent
-}
-
-func (t *BTree) Delete(key []byte) error {
-	// We do this before findLeaf for performance reasons.
-	if key == nil {
-		return KEY_NOT_FOUND_ERROR
-	}
-
-	leaf, err := t.findLeaf(key)
-	if err != nil {
-		return err
-	}
-
-	idx := getKeyIndex(leaf, key)
-	if idx < 0 {
-		return KEY_NOT_FOUND_ERROR
-	}
-
-	return t.deleteEntry(leaf, key, leaf.Pointers[idx])
 }
 
 func (t *BTree) deleteEntry(node *BTreeNode, key []byte, pointer interface{}) error {
@@ -559,101 +662,6 @@ func removeFromNode(node *BTreeNode, key []byte, pointer interface{}) error {
 			node.Parent.Keys[oldKeyIdxInParent] = node.Keys[0]
 		}
 	}
-
-	return nil
-}
-
-func (t *BTree) Print(withPointers bool) error {
-	if t.root == nil {
-		fmt.Println("Tree is empty")
-		return nil
-	}
-
-	queue := []*BTreeNode{t.root}
-	for len(queue) > 0 {
-		levelSize := len(queue)
-		for i := 0; i < levelSize; i++ {
-			node := queue[0]
-			queue = queue[1:]
-			fmt.Printf("%s", node.Keys[:node.Numkeys])
-			if withPointers {
-				if !node.IsLeaf {
-					fmt.Printf("%p ", node)
-				}
-				fmt.Printf("%p", node.Parent)
-			}
-
-			if !node.IsLeaf {
-				nodes := make([]*BTreeNode, node.Numkeys+1)
-				for i := range nodes {
-					n, ok := node.Pointers[i].(*BTreeNode)
-					if !ok {
-						return TYPE_CONVERSION_ERROR
-					}
-
-					nodes[i] = n
-				}
-
-				queue = append(queue, nodes...)
-			}
-
-			if i < levelSize-1 {
-				fmt.Print(", ")
-			}
-		}
-
-		fmt.Println()
-	}
-
-	return nil
-}
-
-func (t *BTree) PrintLeaves() error {
-	if t.root == nil {
-		fmt.Println("Tree is empty")
-		return nil
-	}
-
-	leaf := t.root
-	for !leaf.IsLeaf {
-		l, ok := leaf.Pointers[0].(*BTreeNode)
-		if !ok {
-			return TYPE_CONVERSION_ERROR
-		}
-
-		leaf = l
-	}
-
-	for leaf != nil {
-		fmt.Print(leaf.Keys[:leaf.Numkeys])
-		leaf = leaf.Next
-	}
-	fmt.Println()
-
-	return nil
-}
-
-func (t *BTree) PrintLeavesBackwards() error {
-	if t.root == nil {
-		fmt.Println("Tree is empty")
-		return nil
-	}
-
-	leaf := t.root
-	for !leaf.IsLeaf {
-		l, ok := leaf.Pointers[leaf.Numkeys].(*BTreeNode)
-		if !ok {
-			return TYPE_CONVERSION_ERROR
-		}
-
-		leaf = l
-	}
-
-	for leaf != nil {
-		fmt.Print(leaf.Keys[:leaf.Numkeys])
-		leaf = leaf.Prev
-	}
-	fmt.Println()
 
 	return nil
 }

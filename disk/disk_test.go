@@ -1,4 +1,4 @@
-package diskbptree
+package disk
 
 import (
 	rand "crypto/rand"

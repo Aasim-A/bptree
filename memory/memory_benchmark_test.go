@@ -1,4 +1,4 @@
-package bptree
+package memory
 
 import (
 	"crypto/rand"
